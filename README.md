@@ -15,7 +15,7 @@ This adapter lets you plug a **parallel-port Iomega Zip 100** into a modern comp
 <p align="center"><sub>KiCad 3D renders of the bare board in the ordered colours (black solder mask, yellow silkscreen). Top on the left, bottom on the right.</sub></p>
 
 <p align="center"><img src="images/pcbpa_v0.6_assembled.png" width="80%" alt="Board v0.6 assembled, 3D view from PCBPA"></p>
-<p align="center"><sub>Assembled preview from PCBPA's 3D view (its default green and white colours), showing the Pico 2 on its headers and the status LEDs.</sub></p>
+<p align="center"><sub>Assembled preview from PCBPA's 3D view (its default green and white colours), showing the Pico 2 on its headers, the status LEDs and the DB25.</sub></p>
 
 ## Status
 - **Board v0.6**: ordered from PCBWay on 2026-11-25, due 2026-12-01. Not yet built or tested. KiCad DRC is clean, and so are PCBPA's checks under PCBWay's standard rules.
@@ -86,5 +86,6 @@ You also need the Zip's original DB25 male–male cable, a micro-USB cable, and 
 | `build.py`, `router.py`, `pour.py` | Board generator: place → route → pour |
 | `BOM.md`, `BOM.csv` | Bill of materials |
 | `ORDERING.md` | How to order the PCB from PCBWay |
+| `models/` | 3D model (STL) of the DB25, used by the `.pcbpa` board's 3D view. Made from KiCad's model by `art/wrl_to_stl.py` |
 | `images/` | Board renders |
 | `art/` | Logo and QR source images, plus `add_artwork.py`, which puts them on the bottom silkscreen |
