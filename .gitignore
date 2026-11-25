@@ -1,0 +1,11 @@
+.DS_Store
+# intermediate pipeline outputs
+zipbridge.kicad_pcb
+routed.kicad_pcb
+# KiCad backups/locks
+*-backups/
+*.lck
+_autosave-*
+fp-info-cache
+zipbridge.kicad_pro
+zipbridge.kicad_prl

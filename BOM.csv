@@ -1,0 +1,16 @@
+Qty,Refs,Part,Value,Footprint,Notes,Link
+1,U4,Raspberry Pi Pico 2 (RP2350),,2x20 2.54mm (17.78mm rows),Component side up; USB at left edge,https://www.amazon.com/dp/B0DG3QPQCT
+3,"U1,U2,U3",SN74LVC245AN,DIP-20 octal transceiver,DIP-20_W7.62mm_Socket,Must be LVC (3.3V; 5V-tolerant inputs),https://www.digikey.com/en/products/result?keywords=SN74LVC245AN
+1,J1,DB25 female right-angle PCB mount,.318in (8.08mm) setback with board locks,DSUB-25_Socket_Horizontal_P2.77x2.84mm_EdgePinOffset7.70mm_Housed_MountingHolesOffset9.12mm,Bought: Connectors Pro 10-pack (Amazon B00C58IPSO); alt McMaster 5063N19,https://www.amazon.com/dp/B00C58IPSO
+8,"R1,R2,R3,R4,R5,R6,R7,R8",Resistor,100R 1/4W,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,Data line series,https://www.amazon.com/dp/B07P3MFG5D
+5,"R9,R10,R11,R12,R13",Resistor,10k 1/4W,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,Status pull-ups,https://www.amazon.com/dp/B07P3MFG5D
+2,"R14,R15",Resistor,10k 1/4W,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,OE# pull-ups,https://www.amazon.com/dp/B07P3MFG5D
+4,"R16,R17,R18,R19",Resistor,470R 1/4W,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,LED series (standing),https://www.amazon.com/dp/B07P3MFG5D
+3,"C1,C2,C3",Ceramic capacitor,100nF 50V,C_Disc_D3.0mm_W1.6mm_P2.50mm,Decoupling,https://www.amazon.com/dp/B0DFQ93CPT
+1,D1,LED 3mm,Green,LED_D3.0mm,PWR (+3V3),https://www.amazon.com/dp/B07CB44M2Z
+1,D2,LED 3mm,Yellow,LED_D3.0mm,READY (GP22),https://www.amazon.com/dp/B07CB44M2Z
+1,D3,LED 3mm,Green,LED_D3.0mm,READ Zip->PC (GP20),https://www.amazon.com/dp/B07CB44M2Z
+1,D4,LED 3mm,Red,LED_D3.0mm,WRITE PC->Zip (GP21),https://www.amazon.com/dp/B07CB44M2Z
+3,,DIP-20 IC socket 0.3in,,,For U1-U3,https://www.amazon.com/dp/B07H3RPFH8
+2,,1x20 female header 2.54mm,,,Optional: removable Pico,https://www.amazon.com/dp/B0CFDV41T9
+3,,M3 standoff + screw,,,Optional: mounting holes H1-H3,https://www.amazon.com/dp/B0F297R23T
