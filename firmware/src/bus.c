@@ -21,7 +21,7 @@ static void fault(const char *why) {
 
 void bus_set_fault_handler(bus_fault_fn fn) { fault_fn = fn; }
 bool bus_faulted(void) { return faulted; }
-const char *bus_fault_reason(void) { return faulted ? fault_why : ""; }
+const char *bus_fault_reason(void) { return faulted ? (fault_why ? fault_why : "?") : ""; }
 
 void bus_init(void) {
     oe_data = oe_ctrl = data_out = faulted = false;
@@ -36,7 +36,9 @@ void bus_init(void) {
     hal_put_masked(U1_DIR_MASK, 0);
     hal_set_output(U1_DIR_MASK, true);
     hal_set_output(DATA_MASK, false);
-    hal_set_pulls(DATA_MASK, false, true);
+    /* Pull-ups, not pull-downs: RP2350 erratum E9 can latch a pull-down input
+     * near 2V after an external driver releases it high. */
+    hal_set_pulls(DATA_MASK, true, false);
     hal_set_pulls(STATUS_MASK, true, false);
 
     /* 3. Control lines at idle (all 1). */
@@ -70,16 +72,22 @@ uint8_t bus_ctrl_get(void) { return ctrl_level; }
 
 void bus_data_dir_out(uint8_t preload) {
     if (faulted) return;
+    bool gated = oe_data;
+    if (gated) hal_put_masked(U1_OE_MASK, U1_OE_MASK); /* cable sees nothing while switching */
     hal_put_masked(DATA_MASK, (uint32_t)preload << PIN_DATA_BASE);
     hal_put_masked(U1_DIR_MASK, U1_DIR_MASK); /* U1 stops driving the Pico side */
     hal_set_output(DATA_MASK, true);          /* only now does the Pico drive */
+    if (gated) hal_put_masked(U1_OE_MASK, 0);
     data_out = true;
 }
 
 void bus_data_dir_in(void) {
     if (faulted) return;
+    bool gated = oe_data;
+    if (gated) hal_put_masked(U1_OE_MASK, U1_OE_MASK);
     hal_set_output(DATA_MASK, false); /* Pico lets go first */
     hal_put_masked(U1_DIR_MASK, 0);   /* then U1 drives the Pico side */
+    if (gated) hal_put_masked(U1_OE_MASK, 0);
     data_out = false;
 }
 

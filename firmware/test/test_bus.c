@@ -35,7 +35,7 @@ static void test_init_order(void) {
         {FAKE_PUT, U1_DIR_MASK, 0, 0},
         {FAKE_SET_OUTPUT, U1_DIR_MASK, 1, 0},
         {FAKE_SET_OUTPUT, DATA_MASK, 0, 0},
-        {FAKE_SET_PULLS, DATA_MASK, 2, 0},
+        {FAKE_SET_PULLS, DATA_MASK, 1, 0},
         {FAKE_SET_PULLS, STATUS_MASK, 1, 0},
         {FAKE_PUT, CTRL_MASK, CTRL_MASK, 0},
         {FAKE_SET_OUTPUT, CTRL_MASK, 1, 0},
@@ -55,18 +55,38 @@ static void test_init_order(void) {
     CHECK(!bus_oe_data_on() && bus_oe_ctrl_on() && !bus_data_is_out());
 }
 
+static uint8_t preload_expect;
+static bool preload_ok;
+
+/* While U1 is on, no data pin may ever show the wrong level on the cable. */
+static void preload_invariant(const fake_call_t *c) {
+    (void)c;
+    for (unsigned k = 0; k < DATA_COUNT; k++) {
+        int lv = fake_cable_level(DATA_DB25[k]);
+        if (lv != -1 && lv != ((preload_expect >> k) & 1)) preload_ok = false;
+    }
+}
+
 static void test_dir_out_order(void) {
     fake_reset(1);
     bus_init();
     bus_oe_data(true);
     fake_log_clear();
+    preload_expect = 0xA5;
+    preload_ok = true;
+    fake_on_op = preload_invariant;
     bus_data_dir_out(0xA5);
+    fake_on_op = 0;
+    CHECK(preload_ok);
     CHECK(fake_fights == 0);
-    CHECK(fake_log_len == 3);
-    CHECK(fake_log[0].op == FAKE_PUT && fake_log[0].mask == DATA_MASK &&
-          fake_log[0].value == (0xA5u << PIN_DATA_BASE));
-    CHECK(fake_log[1].op == FAKE_PUT && fake_log[1].mask == U1_DIR_MASK && fake_log[1].value == U1_DIR_MASK);
-    CHECK(fake_log[2].op == FAKE_SET_OUTPUT && fake_log[2].mask == DATA_MASK && fake_log[2].value == 1);
+    CHECK(fake_log_len == 5);
+    CHECK(fake_log[0].op == FAKE_PUT && fake_log[0].mask == U1_OE_MASK && fake_log[0].value == U1_OE_MASK);
+    CHECK(fake_log[1].op == FAKE_PUT && fake_log[1].mask == DATA_MASK &&
+          fake_log[1].value == (0xA5u << PIN_DATA_BASE));
+    CHECK(fake_log[2].op == FAKE_PUT && fake_log[2].mask == U1_DIR_MASK && fake_log[2].value == U1_DIR_MASK);
+    CHECK(fake_log[3].op == FAKE_SET_OUTPUT && fake_log[3].mask == DATA_MASK && fake_log[3].value == 1);
+    CHECK(fake_log[4].op == FAKE_PUT && fake_log[4].mask == U1_OE_MASK && fake_log[4].value == 0);
+    CHECK(fake_u1_enabled() && bus_oe_data_on());
     CHECK(fake_cable_level(2) == 1 && fake_cable_level(3) == 0 && fake_cable_level(9) == 1);
     CHECK(bus_data_is_out());
 }
@@ -79,10 +99,31 @@ static void test_dir_in_order(void) {
     fake_log_clear();
     bus_data_dir_in();
     CHECK(fake_fights == 0);
+    CHECK(fake_log_len == 4);
+    CHECK(fake_log[0].op == FAKE_PUT && fake_log[0].mask == U1_OE_MASK && fake_log[0].value == U1_OE_MASK);
+    CHECK(fake_log[1].op == FAKE_SET_OUTPUT && fake_log[1].mask == DATA_MASK && fake_log[1].value == 0);
+    CHECK(fake_log[2].op == FAKE_PUT && fake_log[2].mask == U1_DIR_MASK && fake_log[2].value == 0);
+    CHECK(fake_log[3].op == FAKE_PUT && fake_log[3].mask == U1_OE_MASK && fake_log[3].value == 0);
+    CHECK(fake_u1_enabled() && !bus_data_is_out());
+}
+
+static void test_dir_changes_u1_off(void) {
+    fake_reset(1);
+    bus_init();
+    fake_log_clear();
+    bus_data_dir_out(0x5A);
+    CHECK(fake_log_len == 3);
+    CHECK(fake_log[0].op == FAKE_PUT && fake_log[0].mask == DATA_MASK);
+    CHECK(fake_log[1].op == FAKE_PUT && fake_log[1].mask == U1_DIR_MASK && fake_log[1].value == U1_DIR_MASK);
+    CHECK(fake_log[2].op == FAKE_SET_OUTPUT && fake_log[2].mask == DATA_MASK && fake_log[2].value == 1);
+    CHECK(!fake_u1_enabled());
+    fake_log_clear();
+    bus_data_dir_in();
     CHECK(fake_log_len == 2);
     CHECK(fake_log[0].op == FAKE_SET_OUTPUT && fake_log[0].mask == DATA_MASK && fake_log[0].value == 0);
     CHECK(fake_log[1].op == FAKE_PUT && fake_log[1].mask == U1_DIR_MASK && fake_log[1].value == 0);
-    CHECK(!bus_data_is_out());
+    CHECK(!fake_u1_enabled());
+    CHECK(fake_fights == 0);
 }
 
 static void test_oe_data_off_resets_dir(void) {
@@ -90,7 +131,10 @@ static void test_oe_data_off_resets_dir(void) {
     bus_init();
     bus_oe_data(true);
     bus_data_dir_out(0xFF);
+    fake_log_clear();
     bus_oe_data(false);
+    CHECK(fake_log_len == 3); /* OE# high, data in, DIR low: OE# stays off */
+    CHECK(fake_log[0].op == FAKE_PUT && fake_log[0].mask == U1_OE_MASK && fake_log[0].value == U1_OE_MASK);
     CHECK(!fake_u1_enabled());
     CHECK(!bus_data_is_out());
     CHECK((fake_out_enable() & DATA_MASK) == 0);
@@ -163,6 +207,14 @@ static void test_fault_on_write_while_in(void) {
     CHECK(!bus_faulted());
 }
 
+static bool safe_ok;
+static int fights_before;
+static void safe_invariant(const fake_call_t *c) {
+    (void)c;
+    if (fake_u23_enabled() && (fake_out_value() & CTRL_MASK) != CTRL_MASK) safe_ok = false;
+    if (fake_fights != fights_before) safe_ok = false;
+}
+
 static void test_safe(void) {
     fake_reset(1);
     bus_init();
@@ -170,17 +222,58 @@ static void test_safe(void) {
     bus_data_dir_out(0xFF);
     bus_ctrl_write(0);
     bus_oe_ctrl(false);
+    safe_ok = true;
+    fights_before = fake_fights;
+    fake_on_op = safe_invariant;
     bus_safe();
+    fake_on_op = 0;
+    CHECK(safe_ok);
     CHECK(!fake_u1_enabled() && fake_u23_enabled());
     CHECK(!bus_data_is_out() && bus_ctrl_get() == 0x0F);
     CHECK(fake_cable_level(1) == 1 && fake_cable_level(17) == 1);
     CHECK(fake_fights == 0);
 }
 
+static void test_fault_on_out_write_while_in(void) {
+    fake_reset(1);
+    bus_init();
+    fault_calls = 0;
+    bus_set_fault_handler(on_fault);
+    bus_oe_data(true);
+    bus_out_write(0x12, 0x03);
+    CHECK(bus_faulted());
+    CHECK(fault_calls == 1);
+    CHECK(!fake_u1_enabled() && !fake_u23_enabled());
+    CHECK(!bus_data_is_out());
+    bus_set_fault_handler(0);
+}
+
+static void test_faulted_calls_do_nothing(void) {
+    fake_reset(1);
+    bus_init();
+    bus_oe_data(true);
+    bus_data_write(1); /* faults: direction is in */
+    CHECK(bus_faulted());
+    int len = fake_log_len;
+    uint32_t ctrl_latch = fake_out_value() & CTRL_MASK;
+    bus_oe_data(true);
+    bus_data_dir_out(0xFF);
+    bus_ctrl_write(0);
+    bus_data_write(1);
+    bus_out_write(0, 0);
+    CHECK(fake_log_len == len);
+    CHECK(!fake_u1_enabled() && !fake_u23_enabled());
+    CHECK((fake_out_enable() & DATA_MASK) == 0);
+    CHECK((fake_out_value() & CTRL_MASK) == ctrl_latch);
+    CHECK(fake_fights == 0);
+    CHECK(bus_fault_reason() != 0 && strlen(bus_fault_reason()) > 0);
+}
+
 int main(void) {
     RUN(test_init_order);
     RUN(test_dir_out_order);
     RUN(test_dir_in_order);
+    RUN(test_dir_changes_u1_off);
     RUN(test_oe_data_off_resets_dir);
     RUN(test_ctrl_write_one_put);
     RUN(test_status_read_bits);
@@ -188,5 +281,7 @@ int main(void) {
     RUN(test_out_write_one_put);
     RUN(test_fault_on_write_while_in);
     RUN(test_safe);
+    RUN(test_fault_on_out_write_while_in);
+    RUN(test_faulted_calls_do_nothing);
     return test_report();
 }

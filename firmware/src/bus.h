@@ -8,9 +8,14 @@
  * Status bit 0 = /ACK .. bit 4 = /ERROR. Ctrl bit 0 = /STROBE, 1 = /AUTOFD,
  * 2 = /INIT, 3 = /SELIN. */
 
+/* The bus layer is main-loop only: it is not interrupt-safe. */
+
 typedef void (*bus_fault_fn)(const char *why);
 
-void bus_init(void);  /* power-up sequence; U2/U3 on, U1 off, data in, ctrl idle (1) */
+/* Power-up sequence; U2/U3 on, U1 off, data in, ctrl idle (1). Call it at
+ * boot, or when the bus GPIOs are in their reset state: it relies on hal_init
+ * releasing all pins at once. */
+void bus_init(void);
 void bus_safe(void);  /* back to the power-up state (no-op once faulted) */
 
 uint8_t bus_status_read(void);
