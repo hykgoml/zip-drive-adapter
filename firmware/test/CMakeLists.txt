@@ -7,8 +7,8 @@ enable_testing()
 set(SRC_DIR ${CMAKE_CURRENT_LIST_DIR}/../src)
 
 # Firmware sources under test and test programs. Each task adds to these lists.
-set(FW_SRC board.c bus.c leds.c console.c)
-set(TESTS fake bus leds console)
+set(FW_SRC board.c bus.c leds.c console.c exercise.c)
+set(TESTS fake bus leds console exercise)
 
 add_compile_options(-Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-omit-frame-pointer)
 add_link_options(-fsanitize=address,undefined)

@@ -8,6 +8,7 @@
 
 #include "board.h"
 #include "bus.h"
+#include "exercise.h"
 #include "gpio_hal.h"
 #include "io.h"
 #include "leds.h"
@@ -79,6 +80,8 @@ static const char *cmd_ctrl(int argc, char **argv);
 static const char *cmd_oe(int argc, char **argv);
 static const char *cmd_dir(int argc, char **argv);
 static const char *cmd_data(int argc, char **argv);
+static const char *cmd_walk(int argc, char **argv);
+static const char *cmd_pattern(int argc, char **argv);
 
 static const cmd_t CMDS[] = {
     {"help", "help", cmd_help, false},
@@ -89,6 +92,8 @@ static const cmd_t CMDS[] = {
     {"oe", "oe <data|ctrl> <on|off>", cmd_oe, true},
     {"dir", "dir <in|out>", cmd_dir, true},
     {"data", "data [<hex>]", cmd_data, false}, /* write form checks the fault itself */
+    {"walk", "walk [ms]  (100-10000, default 1000; no jumpers)", cmd_walk, true},
+    {"pattern", "pattern  (no jumpers)", cmd_pattern, true},
 };
 #define N_CMDS (sizeof CMDS / sizeof CMDS[0])
 
@@ -196,6 +201,30 @@ static const char *cmd_data(int argc, char **argv) {
     last_data = v;
     leds_flash_write();
     return NULL;
+}
+
+static bool parse_uint(const char *s, uint32_t *v) {
+    if (!*s) return false;
+    uint32_t x = 0;
+    for (; *s; s++) {
+        if (!isdigit((unsigned char)*s) || x > 100000u) return false;
+        x = x * 10u + (uint32_t)(*s - '0');
+    }
+    *v = x;
+    return true;
+}
+
+static const char *cmd_walk(int argc, char **argv) {
+    uint32_t ms = 1000;
+    if (argc > 2) return "too many arguments";
+    if (argc == 2 && (!parse_uint(argv[1], &ms) || ms < 100 || ms > 10000)) return "ms must be 100-10000";
+    return exercise_walk(ms);
+}
+
+static const char *cmd_pattern(int argc, char **argv) {
+    (void)argv;
+    if (argc != 1) return "too many arguments";
+    return exercise_pattern();
 }
 
 /* ---- line handling ---- */

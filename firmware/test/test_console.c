@@ -49,6 +49,8 @@ static void test_help_lists_commands(void) {
     CHECK_CONTAINS(out, "status");
     CHECK_CONTAINS(out, "info");
     CHECK_CONTAINS(out, "leds");
+    CHECK_CONTAINS(out, "walk [ms]");
+    CHECK_CONTAINS(out, "pattern");
     CHECK_CONTAINS(out, "ok\n");
 }
 
@@ -446,6 +448,41 @@ static void test_out_printf_truncation(void) {
     CHECK(n >= 4 && strcmp(o + n - 4, "...\n") == 0);
 }
 
+static void test_walk_needs_enter(void) {
+    setup();
+    fake_io_push("x");
+    CHECK_CONTAINS(run("walk 100"), "error: cancelled");
+    CHECK(!fake_data_driven);
+}
+
+static void test_walk_crlf_then_enter(void) {
+    setup();
+    fake_io_push("\n\r"); /* LF of the command's CR LF is skipped; then Enter */
+    const char *out = run("walk 100");
+    CHECK_CONTAINS(out, "/SELIN = pin 17 high\n");
+    CHECK_CONTAINS(out, "ok\n");
+    CHECK(!fake_u1_enabled() && fake_u23_enabled());
+}
+
+static void test_walk_and_pattern_bad_args(void) {
+    static const char *const bad[] = {"walk 50", "walk 20000", "walk abc", "walk 100 2", "pattern now"};
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        setup();
+        const char *out = run(bad[i]);
+        if (!strstr(out, "error: ") || !strstr(out, "usage: ") || fake_log_len != 0) {
+            fprintf(stderr, "    '%s' was not rejected cleanly:\n%s\n", bad[i], out);
+            test_failures++;
+        }
+    }
+}
+
+static void test_pattern_needs_enter(void) {
+    setup();
+    fake_io_push("q");
+    CHECK_CONTAINS(run("pattern"), "error: cancelled");
+    CHECK(!fake_data_driven);
+}
+
 int main(void) {
     RUN(test_help_lists_commands);
     RUN(test_status_case_insensitive);
@@ -479,5 +516,9 @@ int main(void) {
     RUN(test_ctrl_u_and_ctrl_c);
     RUN(test_escape_sequences_swallowed);
     RUN(test_out_printf_truncation);
+    RUN(test_walk_needs_enter);
+    RUN(test_walk_crlf_then_enter);
+    RUN(test_walk_and_pattern_bad_args);
+    RUN(test_pattern_needs_enter);
     return test_report();
 }
