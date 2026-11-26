@@ -87,5 +87,6 @@ You also need the Zip's original DB25 male–male cable, a micro-USB cable, and 
 | `BOM.md`, `BOM.csv` | Bill of materials |
 | `ORDERING.md` | How to order the PCB from PCBWay |
 | `models/` | 3D model (STL) of the DB25, used by the `.pcbpa` board's 3D view. Made from KiCad's model by `art/wrl_to_stl.py` |
+| `firmware/` | Bring-up firmware for the Pico 2: USB serial console to test every LED, buffer and DB25 signal without a Zip drive. Checklist in `firmware/BRINGUP.md` |
 | `images/` | Board renders |
 | `art/` | Logo and QR source images, plus `add_artwork.py`, which puts them on the bottom silkscreen |
