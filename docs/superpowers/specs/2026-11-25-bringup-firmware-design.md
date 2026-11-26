@@ -152,11 +152,12 @@ Rest levels: all control lines at idle (1). Each of the 4 control lines is teste
 - Each link, once, even when both phases find it (a control → status link is found in both): `D3 (pin 5) -> SELECT (pin 13)`.
 - **Two outputs on one input** (status *or* data) is a short: an input with two or more links, or one link plus at least one unclear, or (status inputs only) two or more unclear. Report `possible short: D3 / D4 -> SELECT (pin 13)`, listing every output that is linked or unclear for it. Its links are not printed as links and not counted in the summary, and a data input caught this way gets no `floating?` or `stuck` line. (On real hardware a contended wire settles at a steady mid level, so each output can read as a full 8/8 link.) One output linked to several inputs (pass C: /INIT reaches D2 and /ACK) is normal. A status input unclear for exactly one output: `weak or intermittent: D3 -> SELECT?`.
 - **Blind spot:** two outputs on one input whose contended level reads as 1 look like an unwired input (`stuck high`). The scan can't tell.
+- **Asymmetric case:** a control output (no series resistor) and a data output (100Ω) on one status pin: the control output wins, so the scan shows one link and no short. The fake can't model this.
 - **Data inputs with no link** (phase 1) are only ever reported as `D6 (pin 8) floating?` (changed) or `D6 (pin 8) stuck low/high` (never changed), never as unclear, weak or short. The data lines have no pull-ups, so unwired ones float.
 - An input that never changed over the whole scan (all phases it was sampled in): `/ACK (pin 10) stuck high`. That's normal for an unwired status pin (pull-up). Data lines are only sampled in phase 1, status lines in both; the report covers only what was sampled.
 - If phase 2 was skipped: `phase 2 skipped: control -> data jumpers present`.
 - A summary line: `scan: N links, M possible shorts, K stuck`.
-- If a fault stops the scan, the report prints only the links found so far, then `scan aborted (partial)`: no stuck, floating, short or weak lines and no summary.
+- If a fault stops the scan, the report prints the links found so far (the short rule applies to them too, so an input with 2 or more links shows `possible short:`), then `scan aborted (partial)`: no stuck, floating or weak lines and no summary. The fault handler only records the fault; the console prints the `FAULT:` line afterwards (`console_service()` in the main loop, or `console_exec` after the command), then `error: fault (<reason>)`.
 - `bus_safe()` at the end.
 
 ### Recommended loopback passes (in `BRINGUP.md`)

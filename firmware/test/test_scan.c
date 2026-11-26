@@ -255,8 +255,9 @@ static void test_ctrl_short_on_data_input(void) {
     CHECK_CONTAINS(out, "scan: 0 links, 1 possible shorts, ");
 }
 
-/* An unclear control -> data jumper pair (alternating contention): phase 2 still
- * runs, and no two outputs disagree for longer than one sample. */
+/* Two control outputs on D0 (a forbidden short) under ALTERNATE contention: D0 is
+ * unclear for both, not a link, so phase 2 still runs and no two outputs disagree
+ * for longer than one sample. */
 static void test_unclear_ctrl_data_still_runs_phase2(void) {
     fake_reset(1);
     fake_io_reset();
@@ -309,12 +310,14 @@ static void test_fault_mid_scan_measure(void) {
     CHECK(!fake_data_driven);
     CHECK(!fake_u1_enabled() && !fake_u23_enabled());
     CHECK(r.link[DATA_COUNT][0]); /* /STROBE -> D0 was finished before the fault */
+    for (unsigned i = 0; i < SCAN_INPUTS; i++) /* /AUTOFD was cut off: nothing recorded */
+        CHECK(!r.link[DATA_COUNT + 1][i] && !r.unclear[DATA_COUNT + 1][i]);
 }
 
 static void test_fault_mid_scan_report_and_console(void) {
     fresh_with_pass_c();
     arm_fault(26);
-    CHECK(scan_run() != NULL);
+    CHECK(scan_run() == NULL); /* the console reports the fault reason */
     fake_on_op = 0;
     const char *out = fake_io_output();
     CHECK(!fake_data_driven);
@@ -348,11 +351,53 @@ static void test_fault_in_phase2_aborts(void) {
     pass_a();
     fake_io_clear_output();
     arm_fault(150); /* well into phase 2 (phase 1 is about 90 puts) */
-    CHECK(scan_run() != NULL);
+    CHECK(scan_run() == NULL);
     fake_on_op = 0;
     CHECK_CONTAINS(fake_io_output(), "scan aborted (partial)\n");
     CHECK_LACKS(fake_io_output(), "scan: ");
     CHECK(!fake_u1_enabled() && !fake_u23_enabled());
+    CHECK(fake_data_driven); /* phase 1 finished and phase 2 had started */
+}
+
+/* A fault during scan: scan_run returns NULL, so the console reports the reason. */
+static void test_fault_during_scan_console_output(void) {
+    fresh_with_pass_c();
+    arm_fault(26);
+    const char *cmd = "scan\r";
+    for (; *cmd; cmd++) console_feed((unsigned char)*cmd);
+    fake_on_op = 0;
+    const char *out = fake_io_output();
+    CHECK(count_of(out, "FAULT:") == 1);
+    CHECK(count_of(out, "error: fault (") == 1);
+    CHECK_CONTAINS(out, bus_fault_reason());
+    CHECK_LACKS(out, "ok\n");
+    const char *f = strstr(out, "FAULT:"), *e = strstr(out, "error: fault (");
+    CHECK(f && e && f < e);
+    CHECK(strstr(e, bus_fault_reason()) != NULL);
+}
+
+/* The partial report applies the short rule too. */
+static void test_partial_report_shows_short(void) {
+    fake_reset(1);
+    fake_set_contention(FAKE_CONTEND_LOW);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    fake_jumper(1, 2);
+    fake_jumper(14, 2);
+    fake_io_clear_output();
+    arm_fault(38); /* first sample of the third output: /STROBE and /AUTOFD are done */
+    CHECK(scan_run() == NULL);
+    fake_on_op = 0;
+    const char *out = fake_io_output();
+    CHECK(bus_faulted());
+    CHECK_CONTAINS(out, "possible short: /STROBE / /AUTOFD -> D0 (pin 2)\n");
+    CHECK(count_of(out, ") -> ") == 0);
+    CHECK_CONTAINS(out, "scan aborted (partial)\n");
+    CHECK_LACKS(out, "scan: ");
+    CHECK_LACKS(out, "stuck");
+    CHECK_LACKS(out, "floating");
 }
 
 static void test_scan_refused_when_faulted(void) {
@@ -388,6 +433,8 @@ int main(void) {
     RUN(test_fault_mid_scan_measure);
     RUN(test_fault_mid_scan_report_and_console);
     RUN(test_fault_in_phase2_aborts);
+    RUN(test_fault_during_scan_console_output);
+    RUN(test_partial_report_shows_short);
     RUN(test_scan_refused_when_faulted);
     return test_report();
 }

@@ -86,10 +86,8 @@ void scan_measure(scan_result_t *r) {
         r->phase2_skipped = true;
     } else if (!r->aborted) {
         bus_data_dir_out(0xFF);
-        for (unsigned o = 0; o < SCAN_OUTPUTS && !r->aborted; o++) {
+        for (unsigned o = 0; o < SCAN_OUTPUTS && !r->aborted; o++)
             test_output(r, true, o, STATUS_IN_MASK);
-            if (bus_faulted()) r->aborted = true;
-        }
     }
     bus_safe();
 }
@@ -103,15 +101,13 @@ void scan_report(const scan_result_t *r) {
      * level, so each output can look like a link). A status input unclear for
      * two or more outputs is also a short. A data input unclear for several
      * outputs with no link is just floating. */
-    if (!r->aborted) {
-        for (unsigned i = 0; i < SCAN_INPUTS; i++) {
-            unsigned nl = 0, nu = 0;
-            for (unsigned o = 0; o < SCAN_OUTPUTS; o++) {
-                if (r->link[o][i]) nl++;
-                else if (r->unclear[o][i]) nu++;
-            }
-            is_short[i] = nl >= 2 || (nl >= 1 && nu >= 1) || (i >= DATA_COUNT && nu >= 2);
+    for (unsigned i = 0; i < SCAN_INPUTS; i++) {
+        unsigned nl = 0, nu = 0;
+        for (unsigned o = 0; o < SCAN_OUTPUTS; o++) {
+            if (r->link[o][i]) nl++;
+            else if (r->unclear[o][i]) nu++;
         }
+        is_short[i] = nl >= 2 || (nl >= 1 && nu >= 1) || (i >= DATA_COUNT && nu >= 2);
     }
 
     for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
@@ -120,11 +116,6 @@ void scan_report(const scan_result_t *r) {
                 out_printf("%s (pin %u) -> %s (pin %u)\n", out_name(o), out_pin(o), in_name(i), in_pin(i));
                 links++;
             }
-
-    if (r->aborted) { /* partial: only the links found so far */
-        out_printf("scan aborted (partial)\n");
-        return;
-    }
 
     for (unsigned i = 0; i < SCAN_INPUTS; i++) {
         if (!is_short[i]) continue;
@@ -137,6 +128,11 @@ void scan_report(const scan_result_t *r) {
             }
         out_printf(" -> %s (pin %u)\n", in_name(i), in_pin(i));
         shorts++;
+    }
+
+    if (r->aborted) { /* partial: only the links and shorts found so far */
+        out_printf("scan aborted (partial)\n");
+        return;
     }
 
     for (unsigned i = DATA_COUNT; i < SCAN_INPUTS; i++) { /* status inputs: one unclear output */
@@ -170,5 +166,5 @@ const char *scan_run(void) {
     io_write(SCAN_RULES); /* longer than out_printf's 160-character buffer */
     scan_measure(&r);
     scan_report(&r);
-    return r.aborted ? "fault during scan; unplug to reset" : NULL;
+    return NULL; /* an abort is a fault: console_exec reports its reason */
 }

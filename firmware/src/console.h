@@ -9,6 +9,7 @@ void console_init(void);     /* also installs the bus fault handler */
 void console_banner(void);   /* on terminal connect: banner and prompt */
 void console_feed(int c);    /* one received character */
 void console_exec(char *line); /* run one command line (modified in place) */
+void console_service(void);  /* main loop, every iteration: prints a pending FAULT report once */
 
 /* For long-running commands. A LF right after a CR (one Enter key on many
  * terminals) is skipped. */

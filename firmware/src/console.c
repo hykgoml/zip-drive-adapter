@@ -39,9 +39,20 @@ void out_printf(const char *fmt, ...) {
     io_write(buf);
 }
 
+/* The bus calls this possibly with interrupts off (scan samples), so it only
+ * records. console_service / console_exec print the report later. */
+static bool fault_pending;
+
 static void on_fault(const char *why) {
+    (void)why; /* bus_fault_reason() keeps it */
     leds_set_ready(LEDS_READY_FAULT);
-    out_printf("\nFAULT: %s. All buffers off; unplug to reset.\n", why);
+    fault_pending = true;
+}
+
+void console_service(void) {
+    if (!fault_pending) return;
+    fault_pending = false;
+    out_printf("\nFAULT: %s. All buffers off; unplug to reset.\n", bus_fault_reason());
 }
 
 static const char *fault_error(void) {
@@ -247,6 +258,7 @@ void console_init(void) {
     prev_char = 0;
     esc_state = 0;
     last_data = 0;
+    fault_pending = false;
     bus_set_fault_handler(on_fault);
 }
 
@@ -276,6 +288,7 @@ void console_exec(char *s) {
     bool was_faulted = bus_faulted();
     const char *err = (c->changes_pins && was_faulted) ? fault_error() : c->fn(argc, argv);
     if (!err && !was_faulted && bus_faulted()) err = fault_error(); /* faulted mid-command */
+    console_service(); /* the FAULT report comes before the error line */
     if (err) out_printf("error: %s\nusage: %s\n", err, c->usage);
     else out_printf("ok\n");
 }

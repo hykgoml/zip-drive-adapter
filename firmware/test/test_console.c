@@ -274,8 +274,10 @@ static void test_fault_reported_and_sticky(void) {
     fake_io_clear_output();
     bus_oe_data(true);
     bus_data_write(0x01); /* direction is in: internal fault */
-    CHECK_CONTAINS(fake_io_output(), "FAULT:");
+    CHECK(fake_io_output()[0] == 0); /* the handler only records */
     CHECK(leds_ready_mode() == LEDS_READY_FAULT);
+    console_service();
+    CHECK_CONTAINS(fake_io_output(), "FAULT:");
     fake_log_clear();
     CHECK_CONTAINS(run("oe data on"), "error: fault");
     CHECK_CONTAINS(run("ctrl strobe 0"), "error: fault");
@@ -287,6 +289,24 @@ static void test_fault_reported_and_sticky(void) {
     CHECK_CONTAINS(run("info"), "FAULT:");
     CHECK_CONTAINS(run("data"), "data: 0x");
     CHECK_CONTAINS(run("data"), "ok\n");
+}
+
+static void test_fault_service_prints_once(void) {
+    setup();
+    fake_io_clear_output();
+    bus_data_write(0x01); /* direction is in: fault outside any command */
+    CHECK(fake_io_output()[0] == 0);
+    console_service();
+    const char *out = fake_io_output();
+    CHECK(count_of(out, "FAULT:") == 1);
+    CHECK_CONTAINS(out, "\nFAULT: ");
+    CHECK_CONTAINS(out, "All buffers off; unplug to reset.\n");
+    CHECK_CONTAINS(out, bus_fault_reason());
+    fake_io_clear_output();
+    console_service();
+    CHECK(fake_io_output()[0] == 0);
+    /* a later command does not repeat it either */
+    CHECK_LACKS(run("ctrl strobe 0"), "FAULT:");
 }
 
 /* The hook fires after the first PUT of the command and faults the bus by
@@ -304,10 +324,15 @@ static void test_fault_during_command_is_not_ok(void) {
     fake_on_op = fault_hook;
     const char *out = run("ctrl strobe 0");
     fake_on_op = 0;
-    CHECK_CONTAINS(out, "FAULT:");
-    CHECK_CONTAINS(out, "error: fault");
+    CHECK(count_of(out, "FAULT:") == 1);
+    CHECK_CONTAINS(out, "error: fault (");
     CHECK_LACKS(out, "ok\n");
     CHECK(bus_faulted());
+    const char *f = strstr(out, "FAULT:"), *e = strstr(out, "error: fault");
+    CHECK(f && e && f < e); /* FAULT line first, then the error */
+    fake_io_clear_output();
+    console_service();
+    CHECK(fake_io_output()[0] == 0);
 }
 
 static void test_poll_key_and_wait_enter(void) {
@@ -530,6 +555,7 @@ int main(void) {
     RUN(test_lf_alone_works);
     RUN(test_line_too_long);
     RUN(test_fault_reported_and_sticky);
+    RUN(test_fault_service_prints_once);
     RUN(test_bad_arguments_from_risky_state);
     RUN(test_too_many_tokens_usage);
     RUN(test_blank_lines);

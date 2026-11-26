@@ -1,5 +1,6 @@
 #include "fake_io.h"
 
+#include <assert.h>
 #include <string.h>
 
 #include "fake_board.h"
@@ -48,6 +49,7 @@ int io_getc(void) {
 }
 
 void io_write(const char *s) {
+    assert(fake_irq_depth() == 0); /* real USB output must not run with interrupts off */
     size_t n = strlen(s);
     if (n > sizeof out_buf - 1 - out_len) n = sizeof out_buf - 1 - out_len;
     memcpy(out_buf + out_len, s, n);
