@@ -191,6 +191,7 @@ int fake_cable_level(int p) {
 }
 
 uint32_t fake_out_value(void) { return out; }
+uint64_t fake_now(void) { return now; }
 uint32_t fake_out_enable(void) { return oe; }
 
 uint64_t fake_max_contention_us(void) {

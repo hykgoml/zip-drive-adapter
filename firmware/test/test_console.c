@@ -457,10 +457,11 @@ static void test_walk_needs_enter(void) {
 
 static void test_walk_crlf_then_enter(void) {
     setup();
-    fake_io_push("\n\r"); /* LF of the command's CR LF is skipped; then Enter */
+    fake_io_push("\n\r\n"); /* LF of the command's CR LF skipped; Enter as CR LF, its LF skipped too */
     const char *out = run("walk 100");
     CHECK_CONTAINS(out, "/SELIN = pin 17 high\n");
     CHECK_CONTAINS(out, "ok\n");
+    CHECK_LACKS(out, "stopped");
     CHECK(!fake_u1_enabled() && fake_u23_enabled());
 }
 
@@ -481,6 +482,25 @@ static void test_pattern_needs_enter(void) {
     fake_io_push("q");
     CHECK_CONTAINS(run("pattern"), "error: cancelled");
     CHECK(!fake_data_driven);
+}
+
+static void fault_on_first_put(const fake_call_t *c) {
+    if (c->op != FAKE_PUT || c->mask != (DATA_MASK | CTRL_MASK)) return;
+    fake_on_op = 0;
+    bus_data_dir_in();
+    bus_data_write(1);
+}
+
+static void test_walk_fault_midrun(void) {
+    setup();
+    fake_io_push("\n\r");
+    fake_on_op = fault_on_first_put;
+    const char *out = run("walk 100");
+    fake_on_op = 0;
+    CHECK_CONTAINS(out, "error: fault");
+    CHECK_LACKS(out, "ok\n");
+    CHECK_LACKS(out, " high\n");
+    CHECK(!fake_u1_enabled() && !fake_u23_enabled());
 }
 
 int main(void) {
@@ -520,5 +540,6 @@ int main(void) {
     RUN(test_walk_crlf_then_enter);
     RUN(test_walk_and_pattern_bad_args);
     RUN(test_pattern_needs_enter);
+    RUN(test_walk_fault_midrun);
     return test_report();
 }

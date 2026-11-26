@@ -29,6 +29,8 @@ const char *exercise_walk(uint32_t ms) {
         bool is_data = i < DATA_COUNT;
         unsigned k = is_data ? i : i - DATA_COUNT;
         bus_out_write(is_data ? (uint8_t)(1u << k) : 0, is_data ? 0 : (uint8_t)(1u << k));
+        if (bus_faulted()) break;
+        leds_flash_write();
         out_printf("%s = pin %u high\n", is_data ? DATA_NAME[k] : CTRL_NAME[k],
                    (unsigned)(is_data ? DATA_DB25[k] : CTRL_DB25[k]));
         for (uint32_t t = 0; t < ms; t += 10) {
@@ -60,9 +62,10 @@ const char *exercise_pattern(void) {
         for (unsigned i = 1; i <= N_OUT; i++)
             if ((tick / i) & 1u) lines |= 1u << (i - 1);
         bus_out_write((uint8_t)lines, (uint8_t)(lines >> 8));
+        if (bus_faulted()) break;
         if (tick - last_poll >= 1024u) { /* about every 43 ms */
             last_poll = tick;
-            leds_poll();
+            leds_flash_write();
             if (console_poll_key() >= 0 || bus_faulted()) break;
         }
     }

@@ -44,6 +44,7 @@ void fake_flaky(int db25_pin);            /* flaky contact at a status input: ev
 
 /* Level on a DB25 pin: 0, 1, -1 = floating, -2 = two drivers disagree. */
 int fake_cable_level(int db25_pin);
+uint64_t fake_now(void);       /* fake time, us; does not advance it */
 uint32_t fake_out_value(void);  /* Pico output latch */
 uint32_t fake_out_enable(void); /* Pico output-enable bits */
 bool fake_u1_enabled(void);

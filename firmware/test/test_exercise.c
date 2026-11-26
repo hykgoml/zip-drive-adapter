@@ -136,6 +136,130 @@ static void test_pattern_cancel(void) {
     check_safe();
 }
 
+/* WRITE LED must be lit at some delay in every walk step. */
+static int write_seen[16];
+static int write_step = -1;
+static int last_cur[12];
+
+static void snap_write(const fake_call_t *c) {
+    if (c->op != FAKE_DELAY) return;
+    int lv[12];
+    for (unsigned k = 0; k < 12; k++) {
+        lv[k] = fake_cable_level(k < DATA_COUNT ? DATA_DB25[k] : CTRL_DB25[k - DATA_COUNT]);
+        if (lv[k] < 0) return;
+    }
+    int hot = -1, n = 0;
+    for (int k = 0; k < 12; k++)
+        if (lv[k]) {
+            hot = k;
+            n++;
+        }
+    if (n != 1) return;
+    if (fake_out_value() & (1u << PIN_LED_WRITE)) write_seen[hot] = 1;
+    (void)last_cur;
+    (void)write_step;
+}
+
+static void test_walk_write_led(void) {
+    setup();
+    fake_io_push("\r");
+    memset(write_seen, 0, sizeof write_seen);
+    fake_on_op = snap_write;
+    exercise_walk(100);
+    fake_on_op = 0;
+    for (int k = 0; k < 12; k++) CHECK(write_seen[k]);
+    check_safe();
+}
+
+static void test_walk_poll_spacing(void) {
+    setup();
+    fake_io_push("\r");
+    exercise_walk(100);
+    int n = fake_io_poll_count();
+    CHECK(n > 100);
+    for (int i = 1; i < n; i++) CHECK(fake_io_poll_time(i) - fake_io_poll_time(i - 1) <= 10500);
+}
+
+static void test_pattern_poll_spacing_and_led(void) {
+    setup();
+    fake_io_push("\r");
+    fake_io_set_idle_limit(20);
+    exercise_pattern();
+    int n = fake_io_poll_count();
+    CHECK(n > 10);
+    for (int i = 1; i < n; i++) CHECK(fake_io_poll_time(i) - fake_io_poll_time(i - 1) <= 50000);
+    check_safe();
+}
+
+static void fault_on_first_put(const fake_call_t *c) {
+    if (c->op != FAKE_PUT || c->mask != (DATA_MASK | CTRL_MASK)) return;
+    fake_on_op = 0;
+    bus_data_dir_in();
+    bus_data_write(1);
+}
+
+static void test_walk_fault_stops(void) {
+    setup();
+    fake_io_push("\r");
+    fake_on_op = fault_on_first_put;
+    CHECK(exercise_walk(100) == NULL);
+    fake_on_op = 0;
+    CHECK(bus_faulted());
+    CHECK_LACKS(fake_io_output(), " high\n");
+    CHECK(fake_fights == 0);
+}
+
+static int put_count, fault_at;
+
+static void fault_on_nth_put(const fake_call_t *c) {
+    if (c->op != FAKE_PUT || c->mask != (DATA_MASK | CTRL_MASK)) return;
+    if (++put_count < fault_at) return;
+    fake_on_op = 0;
+    bus_data_dir_in();
+    bus_data_write(1);
+}
+
+static void test_walk_fault_later_step(void) {
+    setup();
+    fake_io_push("\r");
+    put_count = 0;
+    fault_at = 4; /* all-low, D0, D1, then D2's write faults */
+    fake_on_op = fault_on_nth_put;
+    exercise_walk(100);
+    fake_on_op = 0;
+    CHECK(bus_faulted());
+    CHECK_CONTAINS(fake_io_output(), "D1 = pin 3 high\n");
+    CHECK_LACKS(fake_io_output(), "D2 = pin 4 high");
+}
+
+static void test_pattern_fault_stops(void) {
+    setup();
+    fake_io_push("\r");
+    fake_on_op = fault_on_first_put;
+    exercise_pattern();
+    fake_on_op = 0;
+    CHECK(bus_faulted());
+    int puts = 0;
+    for (int i = 0; i < fake_log_len; i++)
+        if (fake_log[i].op == FAKE_PUT && fake_log[i].mask == (DATA_MASK | CTRL_MASK)) puts++;
+    CHECK(puts <= 2);
+}
+
+static void test_pattern_fault_after_put(void) {
+    setup();
+    fake_io_push("\r");
+    put_count = 0;
+    fault_at = 3;
+    fake_on_op = fault_on_nth_put;
+    exercise_pattern();
+    fake_on_op = 0;
+    int puts = 0;
+    for (int i = 0; i < fake_log_len; i++)
+        if (fake_log[i].op == FAKE_PUT && fake_log[i].mask == (DATA_MASK | CTRL_MASK)) puts++;
+    CHECK(bus_faulted());
+    CHECK(puts <= 4); /* stops at the write that faulted, not at the next poll */
+}
+
 int main(void) {
     RUN(test_walk_one_hot);
     RUN(test_walk_step_time);
@@ -143,5 +267,12 @@ int main(void) {
     RUN(test_walk_key_stops);
     RUN(test_pattern_frequencies);
     RUN(test_pattern_cancel);
+    RUN(test_walk_write_led);
+    RUN(test_walk_poll_spacing);
+    RUN(test_pattern_poll_spacing_and_led);
+    RUN(test_walk_fault_stops);
+    RUN(test_walk_fault_later_step);
+    RUN(test_pattern_fault_stops);
+    RUN(test_pattern_fault_after_put);
     return test_report();
 }
