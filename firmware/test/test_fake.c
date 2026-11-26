@@ -127,6 +127,56 @@ static void test_log_records_order(void) {
     CHECK(fake_log[1].t - fake_log[0].t == 7);
 }
 
+static void test_contended_wire_reads_agree(void) {
+    fake_reset(1);
+    fake_jumper(1, 10);
+    fake_jumper(14, 10);
+    fake_jumper(11, 10); /* /STROBE, /AUTOFD, /ACK and BUSY on one wire */
+    enable_buffers(0);
+    hal_put_masked(CTRL_MASK, 0x0Eu << PIN_CTRL_BASE); /* /STROBE 0, /AUTOFD 1 */
+    int seen0 = 0, seen1 = 0;
+    for (int i = 0; i < 6; i++) {
+        uint32_t v = hal_get_all();
+        uint32_t ack = v & 1u, busy = (v >> 1) & 1u;
+        CHECK(ack == busy);
+        if (ack) seen1 = 1; else seen0 = 1;
+    }
+    CHECK(seen0 && seen1);
+}
+
+static void test_floating_wire_reads_agree(void) {
+    fake_reset(1);
+    fake_jumper(2, 3); /* D0 and D1 on one floating wire */
+    enable_buffers(0);
+    int seen0 = 0, seen1 = 0;
+    for (int i = 0; i < 200; i++) {
+        uint32_t v = hal_get_all() >> PIN_DATA_BASE;
+        CHECK((v & 1u) == ((v >> 1) & 1u));
+        if (v & 1u) seen1 = 1; else seen0 = 1;
+    }
+    CHECK(seen0 && seen1);
+}
+
+static void test_status_side_fight(void) {
+    fake_reset(1);
+    enable_buffers(0);
+    CHECK(fake_fights == 0);
+    hal_set_output(1u << PIN_STATUS_BASE, true); /* U3 drives GP0 and so does the Pico */
+    CHECK(fake_fights > 0);
+}
+
+static void test_no_pull_floats(void) {
+    fake_reset(1);
+    enable_buffers(0);
+    hal_set_output(1u << PIN_CTRL_BASE, false);
+    hal_set_pulls(1u << PIN_CTRL_BASE, false, false);
+    CHECK(fake_cable_level(1) == -1);
+    hal_set_pulls(1u << PIN_CTRL_BASE, true, false);
+    CHECK(fake_cable_level(1) == 1);
+    hal_set_pulls(1u << PIN_CTRL_BASE, false, true);
+    CHECK(fake_cable_level(1) == 0);
+}
+
 int main(void) {
     RUN(test_power_on);
     RUN(test_status_pullups);
@@ -140,5 +190,9 @@ int main(void) {
     RUN(test_two_drivers_alternate);
     RUN(test_flaky_alternates);
     RUN(test_log_records_order);
+    RUN(test_contended_wire_reads_agree);
+    RUN(test_floating_wire_reads_agree);
+    RUN(test_status_side_fight);
+    RUN(test_no_pull_floats);
     return test_report();
 }

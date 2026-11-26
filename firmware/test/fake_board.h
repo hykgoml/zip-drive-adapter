@@ -7,7 +7,9 @@
 /* A simulated zipbridge board behind gpio_hal: the three buffers, the status
  * pull-ups, jumpers between DB25 pins, stuck pins, flaky contacts and
  * floating data lines. Every state-changing GPIO call is logged with a fake
- * timestamp (1 us per call, plus delays). Reads are not logged. */
+ * timestamp (1 us per call, plus delays). Reads are not logged. Each hal_get_all
+ * consumes simulation state (drift, alternation and flaky counters), and
+ * fake_on_op hooks may only call fake_* getters, not hal_*. */
 
 typedef enum { FAKE_INIT, FAKE_SET_OUTPUT, FAKE_SET_PULLS, FAKE_PUT, FAKE_DELAY } fake_op_t;
 
@@ -26,8 +28,9 @@ extern bool fake_log_overflow;
 /* Called after every logged call (NULL = none). */
 extern void (*fake_on_op)(const fake_call_t *call);
 
-/* Number of logged calls after which U1 was enabled with DIR = cable->Pico
- * while a data GPIO was a Pico output (two drivers on one wire). Must stay 0. */
+/* Number of logged calls after which two drivers were on one wire: U1 enabled
+ * with DIR = cable->Pico while a data GPIO was a Pico output, or U3 enabled
+ * while a status GPIO (GP0-GP4) was a Pico output. Must stay 0. */
 extern int fake_fights;
 /* Set once U1 drives the cable (enabled, DIR = Pico->cable). */
 extern bool fake_data_driven;
@@ -36,7 +39,7 @@ void fake_reset(uint32_t seed);  /* power-on state, no wiring, empty log, hooks 
 void fake_log_clear(void);
 void fake_jumper(int db25_a, int db25_b); /* join two DB25 pins */
 void fake_stuck(int db25_pin, int level); /* force a pin's level (e.g. shorted to GND) */
-void fake_flaky(int db25_pin);            /* every other read of this pin sees the pull-up (1) */
+void fake_flaky(int db25_pin);            /* flaky contact at a status input: every other read of that pin sees its pull-up (1) */
 
 /* Level on a DB25 pin: 0, 1, -1 = floating, -2 = two drivers disagree. */
 int fake_cable_level(int db25_pin);

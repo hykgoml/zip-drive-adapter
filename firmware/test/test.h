@@ -25,6 +25,7 @@ extern int test_failures; /* defined once in each test_*.c */
 static inline int count_of(const char *hay, const char *needle) {
     int n = 0;
     size_t len = strlen(needle);
+    if (len == 0) return 0;
     for (const char *p = strstr(hay, needle); p; p = strstr(p + len, needle)) n++;
     return n;
 }
