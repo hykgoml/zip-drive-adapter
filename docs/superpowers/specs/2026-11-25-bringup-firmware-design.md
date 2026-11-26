@@ -77,7 +77,7 @@ What the rest of the code (and later the PPA driver) uses:
 R14/R15 keep every buffer disabled until firmware runs. `bus_init()` then, in this order:
 
 1. Sets GP18 and GP19 as outputs, driven **high** (buffers stay disabled).
-2. Sets the data direction to input (GP17 output, low) and GP5–GP12 as Pico inputs with internal pull-downs (they float while U1 is disabled).
+2. Sets the data direction to input (GP17 output, low) and GP5–GP12 as Pico inputs with internal **pull-ups** (they float while U1 is disabled; pull-ups rather than pull-downs because of RP2350 erratum E9, where a pull-down input can latch near 2V after an external driver releases it high). GP0–GP4 (status) also get pull-ups, so a status read with U3 off gives all 1s.
 3. Sets control outputs GP13–GP16 to their idle level: /STROBE=1, /AUTOFD=1, /INIT=1, /SELIN=1.
 4. Enables U2/U3 (GP19 low). The data buffer U1 stays **disabled** until a command enables it.
 
@@ -85,6 +85,7 @@ R14/R15 keep every buffer disabled until firmware runs. `bus_init()` then, in th
 
 With U1 enabled and DIR low, U1 drives GP5–GP12 directly (no resistor on the Pico side). So the order matters:
 
+- Both direction changes are **gated with U1's OE#**: if U1 is enabled, it is disabled first and re-enabled last, so the cable never sees anything but the preload value (no brief 0 pulse while U1's Pico side is undriven).
 - `bus_data_dir_out(value)`: preload the GP5–GP12 output register with `value`, set GP17 **high**, then make GP5–GP12 Pico outputs. The `dir out` command passes the last `data` value (0 after power-up); `scan` phase 2 passes 0xFF so the data lines start at the rest level.
 - `bus_data_dir_in()`: make GP5–GP12 Pico **inputs first**, then set GP17 low.
 - `bus_oe_data(off)` also returns the direction to `in`, so a later `oe data on` never starts driving the cable by itself.
