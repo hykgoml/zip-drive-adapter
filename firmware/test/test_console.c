@@ -51,6 +51,7 @@ static void test_help_lists_commands(void) {
     CHECK_CONTAINS(out, "leds");
     CHECK_CONTAINS(out, "walk [ms]");
     CHECK_CONTAINS(out, "pattern");
+    CHECK_CONTAINS(out, "scan");
     CHECK_CONTAINS(out, "ok\n");
 }
 
@@ -79,7 +80,7 @@ static const char *const BAD[] = {
     "oe", "oe data", "oe data maybe", "oe disk on",
     "dir", "dir sideways", "dir in out",
     "data 1ff", "data zz", "data 0x", "data 12 34",
-    "status x", "info x", "leds x", "help x y",
+    "status x", "info x", "leds x", "help x y", "help x", "scan x",
 };
 
 static void check_bad_list(bool risky) {
@@ -100,6 +101,13 @@ static void check_bad_list(bool risky) {
 
 static void test_bad_arguments_change_nothing(void) { check_bad_list(false); }
 static void test_bad_arguments_from_risky_state(void) { check_bad_list(true); }
+
+static void test_scan_command(void) {
+    setup();
+    CHECK_CONTAINS(run("scan"), "scan: 0 links");
+    CHECK_CONTAINS(run("help scan"), "At most one jumper per input pin");
+    CHECK_CONTAINS(run("scan now"), "error: too many arguments");
+}
 
 static void test_too_many_tokens_usage(void) {
     setup();
@@ -541,5 +549,6 @@ int main(void) {
     RUN(test_walk_and_pattern_bad_args);
     RUN(test_pattern_needs_enter);
     RUN(test_walk_fault_midrun);
+    RUN(test_scan_command);
     return test_report();
 }

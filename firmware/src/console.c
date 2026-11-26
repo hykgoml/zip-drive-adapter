@@ -12,6 +12,7 @@
 #include "gpio_hal.h"
 #include "io.h"
 #include "leds.h"
+#include "scan.h"
 
 #define CONSOLE_LINE_MAX 80
 #define MAX_ARGS 4
@@ -82,9 +83,10 @@ static const char *cmd_dir(int argc, char **argv);
 static const char *cmd_data(int argc, char **argv);
 static const char *cmd_walk(int argc, char **argv);
 static const char *cmd_pattern(int argc, char **argv);
+static const char *cmd_scan(int argc, char **argv);
 
 static const cmd_t CMDS[] = {
-    {"help", "help", cmd_help, false},
+    {"help", "help [scan]", cmd_help, false},
     {"info", "info", cmd_info, false},
     {"leds", "leds", cmd_leds, false},
     {"status", "status", cmd_status, false},
@@ -94,12 +96,16 @@ static const cmd_t CMDS[] = {
     {"data", "data [<hex>]", cmd_data, false}, /* write form checks the fault itself */
     {"walk", "walk [ms]  (100-10000, default 1000; no jumpers)", cmd_walk, true},
     {"pattern", "pattern  (no jumpers)", cmd_pattern, true},
+    {"scan", "scan  (loopback mapper; see 'help scan')", cmd_scan, true},
 };
 #define N_CMDS (sizeof CMDS / sizeof CMDS[0])
 
 static const char *cmd_help(int argc, char **argv) {
-    (void)argv;
-    if (argc != 1) return "too many arguments";
+    if (argc == 2 && strcmp(argv[1], "scan") == 0) {
+        io_write(SCAN_RULES); /* longer than out_printf's buffer */
+        return NULL;
+    }
+    if (argc != 1) return "usage is 'help' or 'help scan'";
     out_printf("commands (levels are pin levels, 0/1):\n");
     for (size_t i = 0; i < N_CMDS; i++) out_printf("  %s\n", CMDS[i].usage);
     return NULL;
@@ -225,6 +231,12 @@ static const char *cmd_pattern(int argc, char **argv) {
     (void)argv;
     if (argc != 1) return "too many arguments";
     return exercise_pattern();
+}
+
+static const char *cmd_scan(int argc, char **argv) {
+    (void)argv;
+    if (argc != 1) return "too many arguments";
+    return scan_run();
 }
 
 /* ---- line handling ---- */
