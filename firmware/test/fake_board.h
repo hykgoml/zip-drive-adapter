@@ -9,7 +9,8 @@
  * floating data lines. Every state-changing GPIO call is logged with a fake
  * timestamp (1 us per call, plus delays). Reads are not logged. Each hal_get_all
  * consumes simulation state (drift, alternation and flaky counters), and
- * fake_on_op hooks may only call fake_* getters, not hal_*. */
+ * fake_on_op hooks may call fake_* getters. They may call hal_* (or code that
+ * does) only after clearing fake_on_op first, so they cannot recurse. */
 
 typedef enum { FAKE_INIT, FAKE_SET_OUTPUT, FAKE_SET_PULLS, FAKE_PUT, FAKE_DELAY } fake_op_t;
 

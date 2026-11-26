@@ -296,7 +296,7 @@ static void test_fault_during_command_is_not_ok(void) {
     fake_on_op = 0;
     CHECK_CONTAINS(out, "FAULT:");
     CHECK_CONTAINS(out, "error: fault");
-    CHECK_LACKS(strstr(out, "error: fault") ? strstr(out, "error: fault") : "", "ok\n");
+    CHECK_LACKS(out, "ok\n");
     CHECK(bus_faulted());
 }
 
@@ -322,6 +322,66 @@ static void test_poll_key_and_wait_enter(void) {
     setup();
     fake_io_set_idle_limit(1000000);
     CHECK(console_poll_key() == -1);
+    /* LF right after CR is skipped, so the next real key is read. */
+    setup();
+    fake_io_set_idle_limit(1000000);
+    feed("x\r");
+    fake_io_push("\nq");
+    CHECK(!console_wait_enter()); /* q, not Enter */
+    setup();
+    fake_io_set_idle_limit(1000000);
+    feed("x\r");
+    fake_io_push("\nx");
+    CHECK(console_poll_key() == 'x');
+    /* reverse hand-off: poll_key took the CR, feed must skip the LF */
+    setup();
+    fake_io_set_idle_limit(1000000);
+    fake_io_push("\r");
+    CHECK(console_poll_key() == '\r');
+    fake_io_clear_output();
+    console_feed('\n');
+    CHECK(count_of(fake_io_output(), "> ") == 0);
+}
+
+static void test_poll_key_esc_shares_state(void) {
+    setup();
+    fake_io_set_idle_limit(1000000);
+    fake_io_push("\x1b[A");
+    CHECK(console_poll_key() == 0x1B);
+    fake_io_clear_output();
+    console_feed('[');
+    console_feed('A');
+    feed("status\r");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=");
+    CHECK_LACKS(fake_io_output(), "unknown");
+}
+
+static void test_control_char_ends_escape(void) {
+    setup();
+    fake_io_clear_output();
+    feed("\x1b[\r");
+    CHECK_LACKS(fake_io_output(), "ok");
+    CHECK_LACKS(fake_io_output(), "error");
+    CHECK_CONTAINS(fake_io_output(), "> ");
+    CHECK(fake_log_len == 0);
+    fake_io_clear_output();
+    feed("\x1b[status\r"); /* s is the final byte and is swallowed */
+    CHECK_CONTAINS(fake_io_output(), "error: unknown command 'tatus'");
+    fake_io_clear_output();
+    feed("\x1b[junk\x03status\r"); /* ^C ends the sequence and is handled */
+    CHECK_CONTAINS(fake_io_output(), "^C\n> ");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=");
+    /* a sequence swallows at most 16 bytes after the introducer */
+    fake_io_clear_output();
+    feed("\x1b[");
+    for (int i = 0; i < 16; i++) feed("0");
+    feed("status\r");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=");
+    fake_io_clear_output();
+    feed("\x1b[");
+    for (int i = 0; i < 17; i++) feed("0");
+    feed("status\r");
+    CHECK_CONTAINS(fake_io_output(), "unknown command '0status'");
 }
 
 static void test_line_boundary(void) {
@@ -348,14 +408,14 @@ static void test_ctrl_u_and_ctrl_c(void) {
     fake_io_clear_output();
     feed(line);
     feed("\x15");
-    CHECK_CONTAINS(fake_io_output(), "\r\n> ");
+    CHECK_CONTAINS(fake_io_output(), "\n> ");
     fake_io_clear_output();
     feed("status\r");
     CHECK_CONTAINS(fake_io_output(), "/ACK=1");
     CHECK_LACKS(fake_io_output(), "too long");
     fake_io_clear_output();
     feed("junk\x03");
-    CHECK_CONTAINS(fake_io_output(), "^C\r\n> ");
+    CHECK_CONTAINS(fake_io_output(), "^C\n> ");
     fake_io_clear_output();
     feed("status\r");
     CHECK_CONTAINS(fake_io_output(), "/ACK=1");
@@ -413,6 +473,8 @@ int main(void) {
     RUN(test_dir_same_direction_is_noop);
     RUN(test_fault_during_command_is_not_ok);
     RUN(test_poll_key_and_wait_enter);
+    RUN(test_poll_key_esc_shares_state);
+    RUN(test_control_char_ends_escape);
     RUN(test_line_boundary);
     RUN(test_ctrl_u_and_ctrl_c);
     RUN(test_escape_sequences_swallowed);

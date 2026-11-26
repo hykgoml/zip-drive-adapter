@@ -21,6 +21,8 @@ static size_t len;
 static bool overflow;
 static int prev_char;
 static int esc_state; /* 0 none, 1 after ESC, 2 inside [ or O sequence */
+static int esc_len;   /* bytes swallowed in state 2 */
+#define ESC_MAX 16
 static uint8_t last_data; /* last `data <hex>` value, preloaded by `dir out` */
 static char errbuf[96];
 
@@ -214,6 +216,8 @@ void console_banner(void) {
 void console_exec(char *s) {
     for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p);
     char *argv[MAX_ARGS];
+    /* argc may exceed MAX_ARGS: only argv[0..MAX_ARGS-1] are valid and argv is not
+     * NULL-terminated, so handlers must check argc before indexing argv. */
     int argc = 0; /* counts every token; only the first MAX_ARGS are stored */
     char *save;
     for (char *t = strtok_r(s, " \t", &save); t; t = strtok_r(NULL, " \t", &save)) {
@@ -240,13 +244,17 @@ void console_feed(int c) {
     prev_char = c;
     if (lf_after_cr) return;
     if (esc_state == 2) {
-        if (c >= 0x40 && c <= 0x7E) esc_state = 0;
-        return;
+        if (c >= 0x20) {
+            if ((c >= 0x40 && c <= 0x7E) || ++esc_len >= ESC_MAX) esc_state = 0;
+            return;
+        }
+        esc_state = 0; /* a control byte ends the sequence and is handled below */
     }
     if (esc_state == 1) {
         esc_state = 0;
         if (c == '[' || c == 'O') {
             esc_state = 2;
+            esc_len = 0;
             return;
         }
     }
@@ -257,7 +265,7 @@ void console_feed(int c) {
     if (c == 0x15 || c == 0x03) {
         len = 0;
         overflow = false;
-        io_write(c == 0x03 ? "^C\r\n" : "\r\n");
+        io_write(c == 0x03 ? "^C\n" : "\n");
         io_write(PROMPT);
         return;
     }
@@ -298,7 +306,10 @@ int console_poll_key(void) {
         if (c < 0) return -1;
         bool lf_after_cr = (c == '\n' && prev_char == '\r');
         prev_char = c;
-        if (!lf_after_cr) return c;
+        if (!lf_after_cr) {
+            if (c == 0x1B) esc_state = 1; /* console_feed swallows a following [A */
+            return c;
+        }
     }
 }
 
