@@ -87,6 +87,17 @@ static void test_override(void) {
     CHECK(led(PIN_LED_READY) && !led(PIN_LED_READ));
 }
 
+static void test_no_redundant_writes(void) {
+    setup();
+    leds_set_ready(LEDS_READY_ON);
+    fake_log_clear();
+    for (int i = 0; i < 10; i++) {
+        hal_delay_us(1000);
+        leds_poll();
+    }
+    for (int i = 0; i < fake_log_len; i++) CHECK(fake_log[i].op != FAKE_PUT);
+}
+
 int main(void) {
     RUN(test_init_outputs);
     RUN(test_ready_blinks_1hz_while_waiting);
@@ -94,5 +105,6 @@ int main(void) {
     RUN(test_fault_blinks_5hz_and_sticks);
     RUN(test_flash_min_30ms);
     RUN(test_override);
+    RUN(test_no_redundant_writes);
     return test_report();
 }

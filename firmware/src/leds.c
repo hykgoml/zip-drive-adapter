@@ -9,7 +9,7 @@
 
 static leds_ready_t mode;
 static uint64_t read_until, write_until;
-static int override_led;
+static int override_led = LED_NONE;
 static uint32_t shown; /* last value written, to skip redundant writes */
 
 void leds_init(void) {
