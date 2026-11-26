@@ -309,6 +309,16 @@ static void test_fault_service_prints_once(void) {
     CHECK_LACKS(run("ctrl strobe 0"), "FAULT:");
 }
 
+static void test_banner_shows_fault(void) {
+    setup();
+    bus_data_write(0x01); /* fault */
+    console_service();
+    fake_io_clear_output();
+    console_banner();
+    CHECK_CONTAINS(fake_io_output(), "FAULT:");
+    CHECK_CONTAINS(fake_io_output(), bus_fault_reason());
+}
+
 /* The hook fires after the first PUT of the command and faults the bus by
  * writing data while the direction is in. It clears itself first, so the
  * fault path's own hal calls do not re-enter it. */
@@ -556,6 +566,7 @@ int main(void) {
     RUN(test_line_too_long);
     RUN(test_fault_reported_and_sticky);
     RUN(test_fault_service_prints_once);
+    RUN(test_banner_shows_fault);
     RUN(test_bad_arguments_from_risky_state);
     RUN(test_too_many_tokens_usage);
     RUN(test_blank_lines);

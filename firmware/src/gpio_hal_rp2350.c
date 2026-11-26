@@ -14,7 +14,7 @@ void hal_set_output(uint32_t mask, bool out) {
 }
 
 void hal_set_pulls(uint32_t mask, bool up, bool down) {
-    for (uint pin = 0; pin < 32; pin++)
+    for (uint pin = 0; pin < NUM_BANK0_GPIOS; pin++)
         if (mask & (1u << pin)) gpio_set_pulls(pin, up, down);
 }
 
@@ -27,6 +27,7 @@ void hal_irq_restore(uint32_t state) { restore_interrupts(state); }
 
 const char *hal_chip_name(void) {
     static char name[24];
-    snprintf(name, sizeof name, "RP2350 A%u", (unsigned)rp2350_chip_version());
+    /* ROM version 2/3/4 = A2/A3/A4; rp2350_chip_version() reports A3 for A4 parts. */
+    snprintf(name, sizeof name, "RP2350 A%u", (unsigned)rp2350_rom_version());
     return name;
 }

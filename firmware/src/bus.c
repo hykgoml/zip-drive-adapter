@@ -32,7 +32,7 @@ void bus_init(void) {
     hal_put_masked(U1_OE_MASK | U23_OE_MASK, U1_OE_MASK | U23_OE_MASK);
     hal_set_output(U1_OE_MASK | U23_OE_MASK, true);
 
-    /* 2. Data direction in; data pins Pico inputs with pull-downs. */
+    /* 2. Data direction in; data pins Pico inputs with pull-ups. */
     hal_put_masked(U1_DIR_MASK, 0);
     hal_set_output(U1_DIR_MASK, true);
     hal_set_output(DATA_MASK, false);

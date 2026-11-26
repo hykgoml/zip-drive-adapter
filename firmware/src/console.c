@@ -263,7 +263,11 @@ void console_init(void) {
 }
 
 void console_banner(void) {
-    out_printf("\nzipbridge bring-up %s. Type 'help'.\n%s", FW_VERSION, PROMPT);
+    out_printf("\nzipbridge bring-up %s. Type 'help'.\n", FW_VERSION);
+    /* A fault report printed while no terminal was open is lost; repeat it. */
+    if (bus_faulted())
+        out_printf("FAULT: %s. All buffers off; unplug to reset.\n", bus_fault_reason());
+    out_printf("%s", PROMPT);
 }
 
 void console_exec(char *s) {
