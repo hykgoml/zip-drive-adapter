@@ -13,6 +13,7 @@ static size_t out_len;
 static int idle_limit, idle_count;
 static uint64_t poll_t[4096];
 static int poll_n;
+static bool connected = true;
 
 void fake_io_reset(void) {
     in_head = in_len = 0;
@@ -21,7 +22,11 @@ void fake_io_reset(void) {
     idle_limit = 1000;
     idle_count = 0;
     poll_n = 0;
+    connected = true;
 }
+
+void fake_io_set_connected(bool c) { connected = c; }
+bool io_connected(void) { return connected; }
 
 void fake_io_push(const char *s) {
     size_t n = strlen(s);

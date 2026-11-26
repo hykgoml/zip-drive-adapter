@@ -198,6 +198,9 @@ static const char *cmd_dir(int argc, char **argv) {
     if (strcmp(argv[1], "out") != 0) return "direction must be in or out";
     if (bus_data_is_out()) return NULL; /* already out */
     if (!bus_oe_data_on()) return "oe data is off; run 'oe data on' first";
+    /* The check briefly samples the control lines (they end at their old values);
+     * nothing else changes if it refuses. */
+    if (scan_ctrl_to_data_present()) return bus_faulted() ? fault_error() : SCAN_CTRL_DATA_ERROR;
     bus_data_dir_out(last_data);
     return NULL;
 }
@@ -263,6 +266,10 @@ void console_init(void) {
 }
 
 void console_banner(void) {
+    len = 0; /* drop a half-typed line from before a disconnect */
+    overflow = false;
+    prev_char = 0;
+    esc_state = 0;
     out_printf("\nzipbridge bring-up %s. Type 'help'.\n", FW_VERSION);
     /* A fault report printed while no terminal was open is lost; repeat it. */
     if (bus_faulted())
@@ -376,6 +383,7 @@ bool console_wait_enter(void) {
         int c = console_poll_key();
         if (c == '\r' || c == '\n') return true;
         if (c >= 0) return false;
+        if (!io_connected()) return false; /* terminal gone: Enter would come from a later session */
         leds_poll();
         hal_delay_us(1000);
     }

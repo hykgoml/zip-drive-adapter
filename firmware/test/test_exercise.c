@@ -6,6 +6,7 @@
 #include "exercise.h"
 #include "fake_board.h"
 #include "fake_io.h"
+#include "io.h"
 #include "leds.h"
 #include "test.h"
 
@@ -260,7 +261,104 @@ static void test_pattern_fault_after_put(void) {
     CHECK(puts <= 4); /* stops at the write that faulted, not at the next poll */
 }
 
+/* ---- USB disconnect ---- */
+static int hook_delays, hook_puts, hook_after;
+static void disconnect_after_delays(const fake_call_t *c) {
+    if (c->op == FAKE_DELAY && c->value >= 10000 && ++hook_delays >= hook_after) {
+        fake_on_op = 0;
+        fake_io_set_connected(false);
+    }
+}
+static void disconnect_after_puts(const fake_call_t *c) {
+    if (c->op == FAKE_PUT && c->mask == (DATA_MASK | CTRL_MASK) && ++hook_puts >= hook_after) {
+        fake_on_op = 0;
+        fake_io_set_connected(false);
+    }
+}
+static void disconnect_in_wait(const fake_call_t *c) {
+    if (c->op == FAKE_DELAY && c->value == 1000 && ++hook_delays >= hook_after) {
+        fake_on_op = 0;
+        fake_io_set_connected(false);
+    }
+}
+
+static void test_disconnect_while_waiting_for_enter(void) {
+    for (int which = 0; which < 2; which++) {
+        setup();
+        fake_io_set_idle_limit(1000000); /* never the idle ESC */
+        hook_delays = 0;
+        hook_after = 5;
+        fake_on_op = disconnect_in_wait;
+        const char *err = which ? exercise_pattern() : exercise_walk(100);
+        fake_on_op = 0;
+        CHECK(err != NULL && strcmp(err, "cancelled") == 0);
+        CHECK(!fake_data_driven);
+        check_safe();
+    }
+}
+
+static void test_disconnect_mid_walk(void) {
+    setup();
+    fake_io_push("\r");
+    hook_delays = 0;
+    hook_after = 30; /* about 3 steps of 100 ms */
+    fake_on_op = disconnect_after_delays;
+    CHECK(exercise_walk(100) == NULL);
+    fake_on_op = 0;
+    CHECK(!io_connected());
+    CHECK(fake_data_driven);
+    CHECK(count_of(fake_io_output(), " high\n") < 12);
+    check_safe();
+}
+
+static void test_disconnect_mid_pattern(void) {
+    setup();
+    fake_io_push("\r");
+    fake_io_set_idle_limit(1000000);
+    hook_puts = 0;
+    hook_after = 3000;
+    fake_on_op = disconnect_after_puts;
+    CHECK(exercise_pattern() == NULL);
+    fake_on_op = 0;
+    CHECK(!io_connected());
+    CHECK(fake_data_driven);
+    check_safe();
+}
+
+/* ---- control -> data jumpers: refuse to drive data ---- */
+static void test_walk_refused_with_ctrl_data_jumper(void) {
+    setup();
+    fake_jumper(1, 6); /* pass D */
+    fake_jumper(14, 7);
+    fake_io_push("\r");
+    fake_contention_reset();
+    const char *err = exercise_walk(100);
+    CHECK(err != NULL && strstr(err, "control -> data jumpers present") != NULL);
+    CHECK(!fake_data_driven);
+    CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
+    check_safe();
+}
+
+static void test_pattern_refused_with_ctrl_data_jumper(void) {
+    setup();
+    fake_jumper(1, 6);
+    fake_jumper(14, 7);
+    fake_io_push("\r");
+    fake_contention_reset();
+    const char *err = exercise_pattern();
+    CHECK(err != NULL && strstr(err, "control -> data jumpers present") != NULL);
+    CHECK(!fake_data_driven);
+    CHECK_LACKS(fake_io_output(), "pattern running");
+    CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
+    check_safe();
+}
+
 int main(void) {
+    RUN(test_disconnect_while_waiting_for_enter);
+    RUN(test_disconnect_mid_walk);
+    RUN(test_disconnect_mid_pattern);
+    RUN(test_walk_refused_with_ctrl_data_jumper);
+    RUN(test_pattern_refused_with_ctrl_data_jumper);
     RUN(test_walk_one_hot);
     RUN(test_walk_step_time);
     RUN(test_walk_cancel);

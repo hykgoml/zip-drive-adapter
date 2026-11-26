@@ -23,7 +23,7 @@ picotool load -x firmware/build/zipbridge_bringup.uf2
 | # | Do | Expect | If not |
 |---|---|---|---|
 | 1 | Look the board over: chip orientation in the sockets, solder bridges. Plug in USB with nothing on the DB25. | PWR LED on. | 3V3 short or LED/R16 wrong way round. Unplug at once if anything gets hot. |
-| 2 | Open the serial port. | READY blinks at 1 Hz before the port opens, then stays on. The banner and `>` prompt appear. | No serial device: UF2 not flashed, or bad USB cable. |
+| 2 | Open the serial port. | READY blinks at 1 Hz before the port opens, then stays on. The banner and `>` prompt appear. Close and reopen the terminal: the banner and prompt come back. | No serial device: UF2 not flashed, or bad USB cable. |
 | 3 | `info` | Version, chip, `oe data=off ctrl=on, dir=in`, all control lines `=1`. | — |
 | 4 | `leds` | READY, then READ, then WRITE, each on alone for 0.5 s. | LED fitted backwards, or wrong resistor. |
 | 5 | `status` with nothing connected | `/ACK=1 BUSY=1 PE=1 SELECT=1 /ERROR=1` | A 0 points at that line's 10k pull-up (R9–R13) or U3. |
@@ -35,7 +35,7 @@ picotool load -x firmware/build/zipbridge_bringup.uf2
 
 Notes:
 
-- Step 7 and 8: WRITE stays lit while the outputs are driven.
+- Step 7: WRITE flashes for 30 ms at each `walk` step. Step 8: during `pattern` WRITE looks steadily lit.
 - Step 8: edges have a few µs of jitter from USB interrupts, but the average frequency is exact. D0 can very rarely miss one pulse (a stretched half-period). Neither is a wiring fault.
 - The data pins have pull-ups (RP2350 erratum E9). With `oe data off`, `data` reads `0xFF`. That is normal.
 - Step 9: an unwired data line can pick up a neighbouring control line through crosstalk and show a false link. If this scan shows any link, crosstalk is present.
@@ -47,7 +47,7 @@ Console: `help scan` shows the jumper rules. Ctrl-U or Ctrl-C clears the line. K
 - Wire an **output to an input** only: data → status, control → status, or control → data.
 - **Never** join two control pins, or two data pins.
 - **At most one jumper per input pin.**
-- **Remove all jumpers** before `walk` and `pattern`.
+- **Remove all jumpers** before `walk`, `pattern` and `dir out`; the firmware refuses if it detects control → data jumpers, but it can't see data↔data or control↔control ones.
 
 The scan can't see every wiring mistake (see "Blind spots"), so check the jumpers by eye.
 

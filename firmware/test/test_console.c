@@ -345,6 +345,84 @@ static void test_fault_during_command_is_not_ok(void) {
     CHECK(fake_io_output()[0] == 0);
 }
 
+static void test_banner_resets_line_editor(void) {
+    setup();
+    feed("sta");      /* half-typed line from before the disconnect */
+    feed("\x1b[");    /* and a half-received escape sequence */
+    console_banner();
+    fake_io_clear_output();
+    CHECK_CONTAINS(run("info"), "zipbridge bring-up"); /* not "stainfo" */
+    setup();
+    for (int i = 0; i < 100; i++) console_feed('x'); /* overflowed line */
+    console_banner();
+    CHECK_CONTAINS(run("info"), "ok\n");
+}
+
+static const char *const CTRL_DATA_ERR = "control -> data jumpers present";
+
+static void test_dir_out_refused_with_ctrl_data_jumper(void) {
+    setup();
+    fake_jumper(1, 2); /* pass C-style: /STROBE -> D0 */
+    fake_jumper(14, 3);
+    run("oe data on");
+    fake_contention_reset();
+    CHECK_CONTAINS(run("dir out"), CTRL_DATA_ERR);
+    CHECK(!fake_data_driven);
+    CHECK(!bus_data_is_out());
+    CHECK(bus_oe_data_on() && fake_u1_enabled());
+    CHECK(bus_ctrl_get() == 0x0F);
+    CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
+    CHECK(fake_fights == 0);
+}
+
+static void test_dir_out_without_jumpers_works(void) {
+    setup();
+    run("oe data on");
+    CHECK_CONTAINS(run("dir out"), "ok\n");
+    CHECK(bus_data_is_out() && fake_data_driven);
+    CHECK_CONTAINS(run("data a5"), "ok\n");
+    CHECK(fake_fights == 0);
+}
+
+static void test_walk_pattern_without_jumpers_still_work(void) {
+    setup();
+    fake_io_push("\r");
+    CHECK_CONTAINS(run("walk 100"), "ok\n");
+    CHECK(fake_data_driven && fake_fights == 0);
+}
+
+/* Seeded random command stream, no jumpers: never two drivers on a wire, and
+ * every scan ends in the bus_safe state. */
+static void test_random_commands(void) {
+    static const char *const CTRLS[] = {"strobe", "autofd", "init", "selin"};
+    uint32_t rng = 12345;
+    setup();
+    char buf[48];
+    for (int n = 0; n < 200; n++) {
+        rng = rng * 1664525u + 1013904223u;
+        unsigned pick = (rng >> 16) % 9, r2 = (rng >> 8) & 0xFF;
+        bool is_scan = false;
+        switch (pick) {
+        case 0: snprintf(buf, sizeof buf, "oe data %s", r2 & 1 ? "on" : "off"); break;
+        case 1: snprintf(buf, sizeof buf, "oe ctrl %s", r2 & 1 ? "on" : "off"); break;
+        case 2: snprintf(buf, sizeof buf, "dir %s", r2 & 1 ? "in" : "out"); break;
+        case 3: case 4: snprintf(buf, sizeof buf, "data %02x", r2); break;
+        case 5: case 6: snprintf(buf, sizeof buf, "ctrl %s %u", CTRLS[r2 & 3], (r2 >> 2) & 1u); break;
+        default: snprintf(buf, sizeof buf, "scan"); is_scan = true; break;
+        }
+        run(buf);
+        if (fake_fights != 0 || bus_faulted()) {
+            fprintf(stderr, "    after command %d '%s': fights=%d faulted=%d\n", n, buf, fake_fights, bus_faulted());
+            test_failures++;
+            return;
+        }
+        if (is_scan) {
+            CHECK(!fake_u1_enabled() && fake_u23_enabled());
+            CHECK(!bus_data_is_out() && bus_ctrl_get() == 0x0F);
+        }
+    }
+}
+
 static void test_poll_key_and_wait_enter(void) {
     setup();
     fake_io_set_idle_limit(1000000);
@@ -574,6 +652,11 @@ int main(void) {
     RUN(test_hex_prefix_uppercase);
     RUN(test_dir_same_direction_is_noop);
     RUN(test_fault_during_command_is_not_ok);
+    RUN(test_banner_resets_line_editor);
+    RUN(test_dir_out_refused_with_ctrl_data_jumper);
+    RUN(test_dir_out_without_jumpers_works);
+    RUN(test_walk_pattern_without_jumpers_still_work);
+    RUN(test_random_commands);
     RUN(test_poll_key_and_wait_enter);
     RUN(test_poll_key_esc_shares_state);
     RUN(test_control_char_ends_escape);

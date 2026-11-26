@@ -415,6 +415,66 @@ static void test_scan_refused_when_faulted(void) {
     CHECK(fake_log_len == 0);
 }
 
+/* ---- scan_ctrl_to_data_present ---- */
+static void fresh_check_state(void (*wire)(void)) {
+    fake_reset(1);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    if (wire) wire();
+    bus_oe_data(true); /* U1 on, direction in */
+    fake_contention_reset();
+}
+
+static void test_ctrl_data_check_none(void) {
+    fresh_check_state(pass_a); /* data -> status only */
+    CHECK(!scan_ctrl_to_data_present());
+    CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
+    CHECK(fake_irq_depth() == 0 && fake_fights == 0 && bus_ctrl_get() == 0x0F);
+    CHECK(!bus_data_is_out() && bus_oe_data_on());
+}
+
+static void test_ctrl_data_check_found(void) {
+    void (*const wires[])(void) = {pass_c, pass_d};
+    for (int w = 0; w < 2; w++) {
+        fresh_check_state(wires[w]);
+        CHECK(scan_ctrl_to_data_present());
+        CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
+        CHECK(fake_irq_depth() == 0 && fake_fights == 0 && bus_ctrl_get() == 0x0F);
+        CHECK(!fake_data_driven);
+    }
+}
+
+/* Floating data lines wander but must not look like a jumper. */
+static void test_ctrl_data_check_floating_is_clean(void) {
+    for (uint32_t seed = 1; seed <= 300; seed++) {
+        fake_reset(seed);
+        fake_io_reset();
+        leds_init();
+        bus_init();
+        console_init();
+        bus_oe_data(true);
+        if (scan_ctrl_to_data_present()) {
+            fprintf(stderr, "    seed %u: floating data read as a control -> data jumper\n", (unsigned)seed);
+            test_failures++;
+        }
+    }
+}
+
+static void test_ctrl_data_check_restores_ctrl(void) {
+    fresh_check_state(pass_d);
+    bus_ctrl_write(0x05);
+    CHECK(scan_ctrl_to_data_present());
+    CHECK(bus_ctrl_get() == 0x05);
+}
+
+static void test_ctrl_data_check_precondition(void) {
+    fresh_check_state(NULL);
+    bus_oe_data(false); /* U1 off: can't sample the data lines */
+    CHECK(scan_ctrl_to_data_present()); /* refuses rather than guessing */
+}
+
 int main(void) {
     RUN(test_rules_printed);
     RUN(test_no_wiring);
@@ -436,5 +496,10 @@ int main(void) {
     RUN(test_fault_during_scan_console_output);
     RUN(test_partial_report_shows_short);
     RUN(test_scan_refused_when_faulted);
+    RUN(test_ctrl_data_check_none);
+    RUN(test_ctrl_data_check_found);
+    RUN(test_ctrl_data_check_floating_is_clean);
+    RUN(test_ctrl_data_check_restores_ctrl);
+    RUN(test_ctrl_data_check_precondition);
     return test_report();
 }

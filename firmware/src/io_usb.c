@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "io.h"
+#include "pico/stdio_usb.h"
 #include "pico/stdlib.h"
 
 int io_getc(void) {
@@ -12,3 +13,5 @@ void io_write(const char *s) {
     fputs(s, stdout); /* stdio turns \n into \r\n */
     fflush(stdout);
 }
+
+bool io_connected(void) { return stdio_usb_connected(); }

@@ -1,6 +1,6 @@
 # Bring-up firmware: design
 
-Date: 2026-11-25. Status: approved in conversation, awaiting review of this write-up.
+Date: 2026-11-25. Status: approved; implemented on branch firmware-bringup.
 
 ## Purpose
 
@@ -39,12 +39,14 @@ firmware/
   CMakeLists.txt            PICO_BOARD=pico2; outputs zipbridge_bringup.uf2.
                             Falls back to ~/pico/pico-sdk when PICO_SDK_PATH is unset.
   pico_sdk_import.cmake     copied from the SDK
-  src/board.h               the pin map above, nothing else
-  src/gpio_hal.h            thin GPIO layer: pin direction, pulls, masked put, get, delay
+  src/board.h, board.c      the pin map above; board.h also declares the signal-name and DB25-pin tables, defined in board.c
+  src/gpio_hal.h            thin GPIO layer: pin direction, pulls, masked put, get, delay, interrupt masking
+  src/io.h, io_usb.c        serial port (getc, write, connected) over USB CDC; the tests supply a fake
   src/gpio_hal_rp2350.c     the real one (SDK calls); the Mac tests supply a fake
   src/bus.h, bus.c          the parallel-port layer, written only against gpio_hal (reused by the PPA driver)
   src/leds.h, leds.c        READY / READ / WRITE
   src/console.h, console.c  line input, command table, argument parsing, help
+  src/exercise.h, exercise.c  walk and pattern
   src/scan.h, scan.c        loopback mapping, written only against bus
   src/main.c                init order, main loop
   test/                     native (Mac) build: fake gpio_hal + unit tests, run with ctest
@@ -55,11 +57,14 @@ firmware/
 
 `bus.c` holds all the parallel-port logic, including power-up and direction-change ordering, and calls only `gpio_hal`. So the Mac tests run the **real** `bus.c` over a fake `gpio_hal` that simulates the board (buffers, jumpers, pull-ups) and records every GPIO call in order. `gpio_hal`:
 
+- `hal_init(mask)` — SIO function, input, output latch 0.
 - `hal_set_output(mask, bool)` — pin direction for the pins in `mask`.
 - `hal_set_pulls(mask, up, down)`.
 - `hal_put_masked(mask, value)` — one SIO write for all pins in `mask`.
 - `hal_get_all() -> uint32_t`.
-- `hal_delay_us(uint32_t)`, `hal_time_us() -> uint64_t`.
+- `hal_delay_us(uint32_t)` (a busy-wait: it is used with interrupts off), `hal_time_us() -> uint64_t`.
+- `hal_irq_save() -> uint32_t` / `hal_irq_restore(state)` — disable and restore interrupts (`save_and_disable_interrupts` / `restore_interrupts`).
+- `hal_chip_name()` — chip and stepping for `info`.
 
 ### `bus` interface
 
@@ -70,6 +75,10 @@ What the rest of the code (and later the PPA driver) uses:
 - `bus_ctrl_write(uint8_t)` / `bus_ctrl_get() -> uint8_t` — 4 control bits (bit 0 = /STROBE, 1 = /AUTOFD, 2 = /INIT, 3 = /SELIN), pin levels, written in one masked write.
 - `bus_data_dir_out(uint8_t preload)`, `bus_data_dir_in()`, `bus_data_write(uint8_t)`, `bus_data_read() -> uint8_t`.
 - `bus_oe_data(on: bool)`, `bus_oe_ctrl(on: bool)` — buffer enables (`on` = OE# low).
+- `bus_out_write(data, ctrl)` — data and control in one masked write (faults if the direction is `in`).
+- `bus_inputs_read() -> uint16_t` — one read: data in bits 0–7, status in bits 8–12.
+- `bus_wait_us(us)`, `bus_irq_save()` / `bus_irq_restore(state)` — delay and interrupt masking for timing-critical windows.
+- `bus_set_fault_handler(fn)`, `bus_faulted()`, `bus_fault_reason()` — the fault API (below). The handler only records; the console prints.
 - `bus_safe()` — return to the power-up state (used after `walk`, `pattern`, `scan` and on faults).
 
 ### Power-up order (safety)
@@ -97,7 +106,7 @@ Data is only driven onto the cable after explicit `oe data on` and `dir out` (or
 - READY: slow blink (1 Hz) until a terminal opens the USB serial port, then steady on.
 - READ: flashes for at least 30 ms on every `data` read and `status` read.
 - WRITE: flashes for at least 30 ms on every data or control write.
-- Fault state: if the firmware hits an internal error (an assert in `bus` or `scan`), it turns all three buffers off (U1, U2, U3) and sets the data direction to `in` and blinks READY fast (5 Hz), keeping the console alive to report the error.
+- Fault state: if `bus` hits an internal error (for example a data write while the direction is `in`), it turns all three buffers off (U1, U2, U3) and sets the data direction to `in` and blinks READY fast (5 Hz), keeping the console alive to report the error.
 
 ## Console
 
@@ -125,7 +134,9 @@ The control lines have no series resistor and the data lines have 100Ω, so some
 - **Allowed:** an output to an input: data → status, control → status, control → data.
 - **Never:** two control pins together (a direct short between U2 outputs), or two data pins together.
 - **At most one jumper per input pin.** Two outputs on one pin are in effect wired straight to each other.
-- **Remove all jumpers** before `walk` and `pattern`, which hold outputs at different levels for long periods.
+- **Remove all jumpers** before `walk`, `pattern` and `dir out`, which hold outputs at different levels for long periods. The firmware refuses if it detects control → data jumpers (below), but it can't see data ↔ data or control ↔ control ones.
+
+**Control → data check.** `walk`, `pattern` and `dir out` call `scan_ctrl_to_data_present()` before driving data: with U1 on and the direction `in`, it samples each control line against the 8 data inputs exactly as scan phase 1 does (8 samples, interrupts off per sample, every control line resting at 1) and then restores the control lines. Any control → data link refuses the command with `control -> data jumpers present; remove all jumpers`; data is never driven. Only 8-of-8 links count: an unwired data line floats and wanders, so "unclear" results would refuse a clean board. `walk` and `pattern` run it after Enter; `dir out` runs it when `oe data` is on, leaving everything unchanged apart from the brief control-line samples if it refuses.
 
 `scan` limits the damage if a rule is broken anyway, or a jumper makes poor contact: **every output rests at the same level (1)** in both phases, and only the output under test leaves it, for one sample at a time (set, wait 5 µs, read, put back). So no two outputs are ever at different levels for more than about 10 µs: brief enough to be unlikely to cause damage, even for a direct short between two outputs.
 
@@ -177,14 +188,15 @@ Together these test every output and every input in both directions: data out (A
 
 - Commands: argument checks before any pin changes; on failure print `error:` plus usage, and leave the state unchanged.
 - Long-running commands (`walk`, `pattern`, `scan`) poll for a keypress at least every 50 ms and always call `bus_safe()` on exit.
+- USB disconnect: `io_connected()` is checked while waiting for Enter (cancelled, nothing driven), at every 10 ms poll in `walk` and every poll in `pattern` (both stop and call `bus_safe()`). `console_banner()` on reconnect also drops any half-typed line.
 - Internal faults: all three buffers off (U1, U2 and U3 disabled), data direction `in`, fast READY blink, message on the console (see LEDs).
-- USB disconnect: the firmware keeps running; when the terminal reopens, the prompt reappears.
+- USB disconnect: the firmware keeps running; when the terminal reopens, the banner and prompt reappear.
 
 ## Testing
 
 **On the Mac, before the boards arrive** (`cmake -S firmware/test -B firmware/test/build && ctest --test-dir firmware/test/build`), using a host compiler, the real `bus.c`, `scan.c` and `console.c`, and a fake `gpio_hal`:
 
-- **Fake board:** models the three buffers (enable, direction), the status pull-ups, jumpers (output → input links), two outputs shorted on one input (that input reads randomly while they differ), stuck inputs, and a floating data input (reads from a seeded generator, so every run is the same). It records every GPIO call with a fake timestamp.
+- **Fake board:** models the three buffers (enable, direction), the status pull-ups, jumpers (output → input links), two outputs shorted on one input (that input alternates, or reads fixed low or fixed high, selectable, while they differ), stuck inputs, and a floating data input (reads from a seeded generator, so every run is the same). It records every GPIO call with a fake timestamp.
 - **Power-up:** `bus_init` makes its calls in the documented order; no buffer is enabled before the control lines are at idle; U1 stays disabled.
 - **Direction changes:** `dir out` sets GP17 before any of GP5–GP12 becomes an output; `dir in` makes them inputs before GP17 goes low; `oe data off` returns the direction to `in`.
 - **`scan`:** finds each simulated link in both phases (including control → status in phase 1); reports possible shorts, weak links, floating data inputs and stuck inputs by the rules above; skips phase 2 when a control → data link exists and never drives data out in that case; in both phases no two outputs are at different levels for more than 10 µs, and never with interrupts enabled (rest levels included); ends in the `bus_safe()` state. Each recommended pass A–D, simulated, produces the output listed in `BRINGUP.md` (unwired data lines: `floating?` or `stuck`). A floating data input is never reported as a short or weak link.

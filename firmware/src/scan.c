@@ -15,6 +15,8 @@ const char SCAN_RULES[] =
     "control to data). Never join two control pins or two data pins.\n"
     "At most one jumper per input pin. Remove all jumpers before walk and pattern.\n";
 
+const char SCAN_CTRL_DATA_ERROR[] = "control -> data jumpers present; remove all jumpers";
+
 /* Irregular, so a floating input picking up crosstalk is unlikely to match. */
 static const uint8_t SEQ[SAMPLES] = {0, 1, 1, 0, 1, 0, 0, 1};
 
@@ -90,6 +92,23 @@ void scan_measure(scan_result_t *r) {
             test_output(r, true, o, STATUS_IN_MASK);
     }
     bus_safe();
+}
+
+bool scan_ctrl_to_data_present(void) {
+    if (!bus_oe_data_on() || bus_data_is_out()) return true;
+    if (!bus_oe_ctrl_on()) return false; /* controls aren't driven onto the cable */
+    uint8_t entry = bus_ctrl_get();
+    scan_result_t r;
+    memset(&r, 0, sizeof r);
+    for (unsigned o = DATA_COUNT; o < SCAN_OUTPUTS && !r.aborted; o++) test_output(&r, false, o, DATA_IN_MASK);
+    bus_ctrl_write(entry);
+    if (r.aborted) return true;
+    for (unsigned o = DATA_COUNT; o < SCAN_OUTPUTS; o++)
+        for (unsigned i = 0; i < DATA_COUNT; i++)
+            /* Links only: unwired data lines float and wander, so "unclear" is
+             * common without any jumper and would refuse a clean board. */
+            if (r.link[o][i]) return true;
+    return false;
 }
 
 void scan_report(const scan_result_t *r) {

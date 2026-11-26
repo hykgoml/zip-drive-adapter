@@ -14,7 +14,7 @@ void hal_set_output(uint32_t mask, bool out) {
 }
 
 void hal_set_pulls(uint32_t mask, bool up, bool down) {
-    for (uint pin = 0; pin < NUM_BANK0_GPIOS; pin++)
+    for (uint pin = 0; pin < 32 && pin < NUM_BANK0_GPIOS; pin++)
         if (mask & (1u << pin)) gpio_set_pulls(pin, up, down);
 }
 

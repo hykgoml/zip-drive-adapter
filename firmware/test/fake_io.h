@@ -1,6 +1,7 @@
 #ifndef FAKE_IO_H
 #define FAKE_IO_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Simulated serial port behind io.h. Input is a queue the test fills.
@@ -10,6 +11,7 @@
 void fake_io_reset(void);              /* empty queue and output, limit 1000 */
 void fake_io_push(const char *s);
 void fake_io_set_idle_limit(int limit);
+void fake_io_set_connected(bool connected); /* default true; reset by fake_io_reset */
 const char *fake_io_output(void);
 void fake_io_clear_output(void);
 

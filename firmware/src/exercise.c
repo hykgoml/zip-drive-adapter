@@ -7,22 +7,35 @@
 #include "bus.h"
 #include "console.h"
 #include "gpio_hal.h"
+#include "io.h"
 #include "leds.h"
+#include "scan.h"
 
 const char JUMPER_WARNING[] = "Remove all loopback jumpers. Enter to start, any other key cancels.\n";
 
 #define N_OUT (DATA_COUNT + CTRL_COUNT)
 
-static void start_driving(void) {
+/* NULL when driving started. Refuses (ending in bus_safe) if control -> data
+ * jumpers are fitted: data driven then would fight the control buffer. After a
+ * fault it also returns NULL, so the console reports the fault itself. */
+static const char *start_driving(void) {
     bus_safe();
     bus_oe_data(true);
+    if (bus_faulted()) return NULL;
+    if (scan_ctrl_to_data_present()) {
+        bus_safe();
+        if (bus_faulted()) return NULL;
+        return SCAN_CTRL_DATA_ERROR;
+    }
     bus_data_dir_out(0);
+    return NULL;
 }
 
 const char *exercise_walk(uint32_t ms) {
     out_printf("%s", JUMPER_WARNING);
     if (!console_wait_enter()) return "cancelled";
-    start_driving();
+    const char *err = start_driving();
+    if (err || bus_faulted()) return err;
     bus_out_write(0, 0);
     bool stopped = false;
     for (unsigned i = 0; i < N_OUT && !stopped && !bus_faulted(); i++) {
@@ -34,7 +47,7 @@ const char *exercise_walk(uint32_t ms) {
         out_printf("%s = pin %u high\n", is_data ? DATA_NAME[k] : CTRL_NAME[k],
                    (unsigned)(is_data ? DATA_DB25[k] : CTRL_DB25[k]));
         for (uint32_t t = 0; t < ms; t += 10) {
-            if (console_poll_key() >= 0) {
+            if (console_poll_key() >= 0 || !io_connected()) {
                 stopped = true;
                 break;
             }
@@ -50,8 +63,9 @@ const char *exercise_walk(uint32_t ms) {
 const char *exercise_pattern(void) {
     out_printf("%s", JUMPER_WARNING);
     if (!console_wait_enter()) return "cancelled";
+    const char *err = start_driving();
+    if (err || bus_faulted()) return err;
     out_printf("pattern running; any key stops\n");
-    start_driving();
     uint64_t t0 = hal_time_us();
     uint32_t last_tick = UINT32_MAX, last_poll = 0;
     for (;;) {
@@ -66,7 +80,7 @@ const char *exercise_pattern(void) {
         if (tick - last_poll >= 1024u) { /* about every 43 ms */
             last_poll = tick;
             leds_flash_write();
-            if (console_poll_key() >= 0 || bus_faulted()) break;
+            if (console_poll_key() >= 0 || bus_faulted() || !io_connected()) break;
         }
     }
     bus_safe();
