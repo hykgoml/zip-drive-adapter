@@ -9,3 +9,7 @@ _autosave-*
 fp-info-cache
 zipbridge.kicad_pro
 zipbridge.kicad_prl
+
+# firmware builds
+firmware/build/
+firmware/test/build/
