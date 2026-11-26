@@ -161,6 +161,16 @@ static void test_status_read_bits(void) {
     CHECK(bus_status_read() == 0x1D);
 }
 
+static void test_inputs_read_one_call(void) {
+    fake_reset(1);
+    bus_init();
+    bus_oe_data(true);
+    for (unsigned k = 0; k < DATA_COUNT; k++) fake_stuck(DATA_DB25[k], (0xA5 >> k) & 1);
+    fake_stuck(11, 0); /* BUSY */
+    fake_stuck(15, 0); /* /ERROR */
+    CHECK(bus_inputs_read() == (uint16_t)(0xA5 | (0x0Du << 8)));
+}
+
 static void test_data_read_in(void) {
     fake_reset(1);
     bus_init();
@@ -270,6 +280,7 @@ static void test_faulted_calls_do_nothing(void) {
 }
 
 int main(void) {
+    RUN(test_inputs_read_one_call);
     RUN(test_init_order);
     RUN(test_dir_out_order);
     RUN(test_dir_in_order);

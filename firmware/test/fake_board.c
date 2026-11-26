@@ -29,6 +29,21 @@ static unsigned flaky_count[NPINS];
 static uint32_t rng;
 static bool in_cont;
 static uint64_t cont_start, cont_max;
+static int contend_mode;
+static int irq_depth;
+static bool irq_on_active; /* in contention with interrupts enabled */
+static uint64_t irq_on_start, irq_on_max;
+
+/* Track contention time that happens with interrupts enabled. */
+static void sync_irq_on(void) {
+    bool want = in_cont && irq_depth == 0;
+    if (want && !irq_on_active) {
+        irq_on_start = now;
+    } else if (!want && irq_on_active) {
+        if (now - irq_on_start > irq_on_max) irq_on_max = now - irq_on_start;
+    }
+    irq_on_active = want;
+}
 
 static uint32_t rng_next(void) { /* xorshift32 */
     rng ^= rng << 13;
@@ -100,7 +115,9 @@ static int read_cable(int p) {
         if (net_epoch[root] != epoch) {
             net_epoch[root] = epoch;
             if (lv == LEVEL_CONTENDED) {
-                net_value[root] = (int)(contend_count[root]++ & 1u); /* mid-level: alternates */
+                if (contend_mode == FAKE_CONTEND_LOW) net_value[root] = 0;
+                else if (contend_mode == FAKE_CONTEND_HIGH) net_value[root] = 1;
+                else net_value[root] = (int)(contend_count[root]++ & 1u); /* alternates */
             } else {
                 if ((rng_next() & 7u) == 0) float_level[root] ^= 1; /* drifts now and then */
                 net_value[root] = float_level[root];
@@ -135,6 +152,7 @@ static void after_op(fake_op_t op, uint32_t mask, uint32_t value) {
         in_cont = false;
         if (now - cont_start > cont_max) cont_max = now - cont_start;
     }
+    sync_irq_on();
     if (fake_on_op) fake_on_op(&call);
 }
 
@@ -156,6 +174,10 @@ void fake_reset(uint32_t seed) {
     }
     in_cont = false;
     cont_start = cont_max = 0;
+    contend_mode = FAKE_CONTEND_ALTERNATE;
+    irq_depth = 0;
+    irq_on_active = false;
+    irq_on_start = irq_on_max = 0;
     fake_log_clear();
     fake_on_op = 0;
     fake_fights = 0;
@@ -202,7 +224,19 @@ uint64_t fake_max_contention_us(void) {
 
 void fake_contention_reset(void) {
     cont_max = 0;
+    irq_on_max = 0;
     if (in_cont) cont_start = now;
+    irq_on_active = false;
+    sync_irq_on();
+}
+
+void fake_set_contention(int mode) { contend_mode = mode; }
+int fake_irq_depth(void) { return irq_depth; }
+
+uint64_t fake_max_contention_irq_on_us(void) {
+    uint64_t m = irq_on_max;
+    if (irq_on_active && now - irq_on_start > m) m = now - irq_on_start;
+    return m;
 }
 
 /* ---- gpio_hal ---- */
@@ -259,5 +293,18 @@ void hal_delay_us(uint32_t us) {
 }
 
 uint64_t hal_time_us(void) { return now++; }
+
+uint32_t hal_irq_save(void) {
+    irq_depth++;
+    sync_irq_on();
+    return (uint32_t)irq_depth;
+}
+
+void hal_irq_restore(uint32_t state) {
+    (void)state;
+    assert(irq_depth > 0);
+    irq_depth--;
+    sync_irq_on();
+}
 
 const char *hal_chip_name(void) { return "fake RP2350"; }

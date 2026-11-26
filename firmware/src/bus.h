@@ -27,6 +27,7 @@ void bus_data_dir_out(uint8_t preload); /* preload, DIR high, then Pico outputs 
 void bus_data_dir_in(void);             /* Pico inputs, then DIR low */
 void bus_data_write(uint8_t v);         /* faults if direction is in */
 uint8_t bus_data_read(void);
+uint16_t bus_inputs_read(void); /* one read: data in bits 0-7, status in bits 8-12 */
 void bus_out_write(uint8_t data, uint8_t ctrl); /* both in one write; faults if direction is in */
 
 void bus_oe_data(bool on); /* off also returns the direction to in */
@@ -37,6 +38,8 @@ bool bus_oe_ctrl_on(void);
 bool bus_data_is_out(void);
 
 void bus_wait_us(uint32_t us);
+uint32_t bus_irq_save(void); /* interrupts off around a timing-critical window */
+void bus_irq_restore(uint32_t state);
 
 /* Fault: all three buffers off, direction in, handler called once. Sticky
  * until bus_init (power cycle); bus calls that change pins do nothing. */

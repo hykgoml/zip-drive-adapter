@@ -138,6 +138,10 @@ Maps whatever allowed jumpers are wired on the breakout. It doesn't assume a par
 - **unclear:** the input changed during the test but didn't match on all 8;
 - **none:** the input didn't change.
 
+Each sample (set, wait, read, put back) runs with interrupts off, and each sample is one `hal_get_all` (`bus_inputs_read`).
+
+**Known limitation: crosstalk.** An unwired, high-impedance data line can follow a neighbouring control line through capacitive coupling and show a false 8/8 link. There is no firmware countermeasure. Bring-up therefore starts with a no-jumper `scan`, which must show 0 links.
+
 **Phase 1: control → data and status** (data buffer as input, so the data lines can't fight).
 Rest levels: all control lines at idle (1). Each of the 4 control lines is tested; the 8 data lines and the 5 status lines are sampled.
 
@@ -146,11 +150,13 @@ Rest levels: all control lines at idle (1). Each of the 4 control lines is teste
 
 **Report.**
 - Each link, once, even when both phases find it (a control → status link is found in both): `D3 (pin 5) -> SELECT (pin 13)`.
-- A **status** input that is **unclear** for two or more outputs: `possible short: D3 / D4 -> SELECT (pin 13)`. Unclear for exactly one output: `weak or intermittent: D3 -> SELECT?`.
+- **Two outputs on one input** (status *or* data) is a short: an input with two or more links, or one link plus at least one unclear, or (status inputs only) two or more unclear. Report `possible short: D3 / D4 -> SELECT (pin 13)`, listing every output that is linked or unclear for it. Its links are not printed as links and not counted in the summary, and a data input caught this way gets no `floating?` or `stuck` line. (On real hardware a contended wire settles at a steady mid level, so each output can read as a full 8/8 link.) One output linked to several inputs (pass C: /INIT reaches D2 and /ACK) is normal. A status input unclear for exactly one output: `weak or intermittent: D3 -> SELECT?`.
+- **Blind spot:** two outputs on one input whose contended level reads as 1 look like an unwired input (`stuck high`). The scan can't tell.
 - **Data inputs with no link** (phase 1) are only ever reported as `D6 (pin 8) floating?` (changed) or `D6 (pin 8) stuck low/high` (never changed), never as unclear, weak or short. The data lines have no pull-ups, so unwired ones float.
 - An input that never changed over the whole scan (all phases it was sampled in): `/ACK (pin 10) stuck high`. That's normal for an unwired status pin (pull-up). Data lines are only sampled in phase 1, status lines in both; the report covers only what was sampled.
 - If phase 2 was skipped: `phase 2 skipped: control -> data jumpers present`.
 - A summary line: `scan: N links, M possible shorts, K stuck`.
+- If a fault stops the scan, the report prints only the links found so far, then `scan aborted (partial)`: no stuck, floating, short or weak lines and no summary.
 - `bus_safe()` at the end.
 
 ### Recommended loopback passes (in `BRINGUP.md`)
@@ -180,7 +186,7 @@ Together these test every output and every input in both directions: data out (A
 - **Fake board:** models the three buffers (enable, direction), the status pull-ups, jumpers (output → input links), two outputs shorted on one input (that input reads randomly while they differ), stuck inputs, and a floating data input (reads from a seeded generator, so every run is the same). It records every GPIO call with a fake timestamp.
 - **Power-up:** `bus_init` makes its calls in the documented order; no buffer is enabled before the control lines are at idle; U1 stays disabled.
 - **Direction changes:** `dir out` sets GP17 before any of GP5–GP12 becomes an output; `dir in` makes them inputs before GP17 goes low; `oe data off` returns the direction to `in`.
-- **`scan`:** finds each simulated link in both phases (including control → status in phase 1); reports possible shorts, weak links, floating data inputs and stuck inputs by the rules above; skips phase 2 when a control → data link exists and never drives data out in that case; in both phases no two outputs are at different levels for more than 20 µs (rest levels included); ends in the `bus_safe()` state. Each recommended pass A–D, simulated, produces the output listed in `BRINGUP.md` (unwired data lines: `floating?` or `stuck`). A floating data input is never reported as a short or weak link.
+- **`scan`:** finds each simulated link in both phases (including control → status in phase 1); reports possible shorts, weak links, floating data inputs and stuck inputs by the rules above; skips phase 2 when a control → data link exists and never drives data out in that case; in both phases no two outputs are at different levels for more than 10 µs, and never with interrupts enabled (rest levels included); ends in the `bus_safe()` state. Each recommended pass A–D, simulated, produces the output listed in `BRINGUP.md` (unwired data lines: `floating?` or `stuck`). A floating data input is never reported as a short or weak link.
 - **Console:** parsing of every command and argument form, case-insensitivity, rejection of bad arguments with no GPIO change, `dir out` refused while `oe data` is off, `data <hex>` refused while the direction is `in`, `walk`/`pattern` don't start without Enter.
 
 **On the board, Tuesday** (`firmware/BRINGUP.md`), in this order, each step with what you should see and what a failure points to:

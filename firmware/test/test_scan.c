@@ -26,7 +26,9 @@ static const char *scan_with(void (*wire)(void)) {
 }
 
 static void check_common(void) {
-    CHECK(fake_max_contention_us() <= 20);
+    CHECK(fake_max_contention_us() <= 10);
+    CHECK(fake_max_contention_irq_on_us() == 0); /* never in contention with interrupts on */
+    CHECK(fake_irq_depth() == 0);
     CHECK(fake_fights == 0);
     CHECK(!fake_log_overflow);
     CHECK(!fake_u1_enabled() && fake_u23_enabled()); /* bus_safe() state */
@@ -165,12 +167,15 @@ static void test_weak_link(void) {
     CHECK_CONTAINS(out, "weak or intermittent: D3 -> SELECT?\n");
     CHECK_LACKS(out, "D3 (pin 5) -> SELECT");
     CHECK_LACKS(out, "possible short:");
+    CHECK_LACKS(out, "SELECT (pin 13) stuck");
+    CHECK_CONTAINS(out, "scan: 0 links, 0 possible shorts, ");
 }
 
 static void test_stuck_low(void) {
     const char *out = scan_with(ack_stuck_low);
     check_common();
     CHECK_CONTAINS(out, "/ACK (pin 10) stuck low\n");
+    CHECK_CONTAINS(out, "scan: 0 links, 0 possible shorts, ");
 }
 
 static void test_floating_never_short_or_weak(void) {
@@ -182,13 +187,187 @@ static void test_floating_never_short_or_weak(void) {
         console_init();
         pass_c(); /* four floating data lines */
         fake_io_clear_output();
-        scan_run();
+        CHECK(scan_run() == NULL);
+        check_common();
         const char *out = fake_io_output();
         if (strstr(out, "possible short:") || strstr(out, "weak") || count_of(out, ") -> ") != 6) {
             fprintf(stderr, "    seed %u:\n%s\n", (unsigned)seed, out);
             test_failures++;
         }
     }
+}
+
+/* Two data outputs on one status input; the contended level is steady. */
+static void test_short_contended_low(void) {
+    fake_reset(1);
+    fake_set_contention(FAKE_CONTEND_LOW);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    short_d3_d4();
+    fake_io_clear_output();
+    CHECK(scan_run() == NULL);
+    const char *out = fake_io_output();
+    check_common();
+    CHECK_CONTAINS(out, "possible short: D3 / D4 -> SELECT (pin 13)\n");
+    CHECK(count_of(out, ") -> ") == 0);
+    CHECK_CONTAINS(out, "scan: 0 links, 1 possible shorts, ");
+}
+
+/* Known blind spot: when the contended level reads as 1 the wire looks unwired. */
+static void test_short_contended_high_is_invisible(void) {
+    fake_reset(1);
+    fake_set_contention(FAKE_CONTEND_HIGH);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    short_d3_d4();
+    fake_io_clear_output();
+    CHECK(scan_run() == NULL);
+    const char *out = fake_io_output();
+    check_common();
+    CHECK_CONTAINS(out, "SELECT (pin 13) stuck high\n");
+    CHECK_LACKS(out, "possible short:");
+    CHECK(count_of(out, ") -> ") == 0);
+}
+
+/* Two control outputs on one data input: a short, with no floating?/stuck line for D0. */
+static void test_ctrl_short_on_data_input(void) {
+    fake_reset(1);
+    fake_set_contention(FAKE_CONTEND_LOW);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    fake_jumper(1, 2);
+    fake_jumper(14, 2);
+    fake_io_clear_output();
+    fake_contention_reset();
+    CHECK(scan_run() == NULL);
+    const char *out = fake_io_output();
+    check_common();
+    CHECK_CONTAINS(out, "possible short: /STROBE / /AUTOFD -> D0 (pin 2)\n");
+    CHECK(count_of(out, ") -> ") == 0);
+    CHECK_LACKS(out, "D0 (pin 2) floating");
+    CHECK_LACKS(out, "D0 (pin 2) stuck");
+    CHECK_CONTAINS(out, "scan: 0 links, 1 possible shorts, ");
+}
+
+/* An unclear control -> data jumper pair (alternating contention): phase 2 still
+ * runs, and no two outputs disagree for longer than one sample. */
+static void test_unclear_ctrl_data_still_runs_phase2(void) {
+    fake_reset(1);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    fake_jumper(1, 2);
+    fake_jumper(14, 2);
+    fake_contention_reset();
+    scan_result_t r;
+    scan_measure(&r);
+    CHECK(!r.phase2_skipped && !r.aborted);
+    CHECK(r.unclear[DATA_COUNT][0] && r.unclear[DATA_COUNT + 1][0]);
+    CHECK(fake_data_driven); /* phase 2 ran */
+    check_common();
+}
+
+/* ---- fault in the middle of a scan ---- */
+static int puts_left;
+static void fault_on_nth_put(const fake_call_t *c) {
+    if (c->op != FAKE_PUT || --puts_left > 0) return;
+    fake_on_op = 0;
+    bus_data_dir_in();
+    bus_data_write(1); /* direction is in: faults */
+}
+
+static void arm_fault(int n) {
+    puts_left = n;
+    fake_on_op = fault_on_nth_put;
+}
+
+static void fresh_with_pass_c(void) {
+    fake_reset(1);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    pass_c();
+    fake_io_clear_output();
+}
+
+static void test_fault_mid_scan_measure(void) {
+    fresh_with_pass_c();
+    arm_fault(26); /* a few controls into phase 1 */
+    scan_result_t r;
+    scan_measure(&r);
+    fake_on_op = 0;
+    CHECK(r.aborted);
+    CHECK(bus_faulted());
+    CHECK(!fake_data_driven);
+    CHECK(!fake_u1_enabled() && !fake_u23_enabled());
+    CHECK(r.link[DATA_COUNT][0]); /* /STROBE -> D0 was finished before the fault */
+}
+
+static void test_fault_mid_scan_report_and_console(void) {
+    fresh_with_pass_c();
+    arm_fault(26);
+    CHECK(scan_run() != NULL);
+    fake_on_op = 0;
+    const char *out = fake_io_output();
+    CHECK(!fake_data_driven);
+    CHECK_CONTAINS(out, "/STROBE (pin 1) -> D0 (pin 2)\n");
+    CHECK_CONTAINS(out, "scan aborted (partial)\n");
+    CHECK_LACKS(out, "stuck");
+    CHECK_LACKS(out, "floating");
+    CHECK_LACKS(out, "possible short");
+    CHECK_LACKS(out, "weak");
+    CHECK_LACKS(out, "scan: ");
+    CHECK_LACKS(out, "phase 2");
+
+    fresh_with_pass_c();
+    arm_fault(26);
+    const char *cmd = "scan\r";
+    for (; *cmd; cmd++) console_feed((unsigned char)*cmd);
+    fake_on_op = 0;
+    out = fake_io_output();
+    CHECK_CONTAINS(out, "error: fault");
+    CHECK_LACKS(out, "ok\n");
+    CHECK_CONTAINS(out, "scan aborted (partial)\n");
+    CHECK(!fake_data_driven);
+}
+
+static void test_fault_in_phase2_aborts(void) {
+    fake_reset(1);
+    fake_io_reset();
+    leds_init();
+    bus_init();
+    console_init();
+    pass_a();
+    fake_io_clear_output();
+    arm_fault(150); /* well into phase 2 (phase 1 is about 90 puts) */
+    CHECK(scan_run() != NULL);
+    fake_on_op = 0;
+    CHECK_CONTAINS(fake_io_output(), "scan aborted (partial)\n");
+    CHECK_LACKS(fake_io_output(), "scan: ");
+    CHECK(!fake_u1_enabled() && !fake_u23_enabled());
+}
+
+static void test_scan_refused_when_faulted(void) {
+    fresh_with_pass_c();
+    bus_data_write(1); /* direction is in: faults */
+    CHECK(bus_faulted());
+    fake_log_clear();
+    fake_io_clear_output();
+    const char *cmd = "scan\r";
+    for (; *cmd; cmd++) console_feed((unsigned char)*cmd);
+    const char *out = fake_io_output();
+    CHECK_CONTAINS(out, "error: fault");
+    CHECK_LACKS(out, "ok\n");
+    CHECK_LACKS(out, "Jumper rules");
+    CHECK(fake_log_len == 0);
 }
 
 int main(void) {
@@ -202,5 +381,13 @@ int main(void) {
     RUN(test_weak_link);
     RUN(test_stuck_low);
     RUN(test_floating_never_short_or_weak);
+    RUN(test_short_contended_low);
+    RUN(test_short_contended_high_is_invisible);
+    RUN(test_ctrl_short_on_data_input);
+    RUN(test_unclear_ctrl_data_still_runs_phase2);
+    RUN(test_fault_mid_scan_measure);
+    RUN(test_fault_mid_scan_report_and_console);
+    RUN(test_fault_in_phase2_aborts);
+    RUN(test_scan_refused_when_faulted);
     return test_report();
 }

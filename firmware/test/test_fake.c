@@ -117,6 +117,67 @@ static void test_flaky_alternates(void) {
     CHECK(a != b);
 }
 
+static void contend_read(int mode, uint32_t *a, uint32_t *b) {
+    fake_reset(1);
+    fake_set_contention(mode);
+    fake_jumper(1, 10);
+    fake_jumper(14, 10);
+    enable_buffers(0);
+    hal_put_masked(CTRL_MASK, 0x0Eu << PIN_CTRL_BASE); /* they disagree */
+    *a = hal_get_all() & 1u;
+    *b = hal_get_all() & 1u;
+}
+
+static void test_contention_low(void) {
+    uint32_t a, b;
+    contend_read(FAKE_CONTEND_LOW, &a, &b);
+    CHECK(a == 0 && b == 0);
+}
+
+static void test_contention_high(void) {
+    uint32_t a, b;
+    contend_read(FAKE_CONTEND_HIGH, &a, &b);
+    CHECK(a == 1 && b == 1);
+}
+
+static void test_contention_alternate_default(void) {
+    uint32_t a, b;
+    contend_read(FAKE_CONTEND_ALTERNATE, &a, &b);
+    CHECK(a != b);
+    fake_reset(1); /* fake_reset restores the default */
+    fake_set_contention(FAKE_CONTEND_HIGH);
+    fake_reset(1);
+    fake_jumper(1, 10);
+    fake_jumper(14, 10);
+    enable_buffers(0);
+    hal_put_masked(CTRL_MASK, 0x0Eu << PIN_CTRL_BASE);
+    a = hal_get_all() & 1u;
+    b = hal_get_all() & 1u;
+    CHECK(a != b);
+}
+
+static void test_irq_depth_and_contention(void) {
+    fake_reset(1);
+    fake_jumper(1, 14); /* two control outputs on one wire */
+    enable_buffers(0);
+    CHECK(fake_irq_depth() == 0);
+    uint32_t s = hal_irq_save();
+    uint32_t s2 = hal_irq_save();
+    CHECK(fake_irq_depth() == 2);
+    hal_put_masked(CTRL_MASK, 0x0Eu << PIN_CTRL_BASE);
+    hal_delay_us(5);
+    hal_put_masked(CTRL_MASK, CTRL_MASK);
+    hal_irq_restore(s2);
+    hal_irq_restore(s);
+    CHECK(fake_irq_depth() == 0);
+    CHECK(fake_max_contention_us() >= 5);
+    CHECK(fake_max_contention_irq_on_us() == 0);
+    hal_put_masked(CTRL_MASK, 0x0Eu << PIN_CTRL_BASE); /* interrupts on */
+    hal_delay_us(5);
+    hal_put_masked(CTRL_MASK, CTRL_MASK);
+    CHECK(fake_max_contention_irq_on_us() >= 5);
+}
+
 static void test_log_records_order(void) {
     fake_reset(1);
     hal_put_masked(CTRL_MASK, CTRL_MASK);
@@ -178,6 +239,10 @@ static void test_no_pull_floats(void) {
 }
 
 int main(void) {
+    RUN(test_contention_low);
+    RUN(test_contention_high);
+    RUN(test_contention_alternate_default);
+    RUN(test_irq_depth_and_contention);
     RUN(test_power_on);
     RUN(test_status_pullups);
     RUN(test_ctrl_jumper_to_status);

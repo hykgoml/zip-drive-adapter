@@ -38,12 +38,18 @@ static void test_output(scan_result_t *r, bool phase2, unsigned o, uint16_t in_m
     uint8_t match[SCAN_INPUTS] = {0};
     uint16_t first = 0, changed = 0;
     for (unsigned k = 0; k < SAMPLES; k++) {
+        /* Interrupts off from the moment the output leaves rest until it is back,
+         * so an interrupt can't stretch the time two outputs disagree. */
+        uint32_t irq = bus_irq_save();
         drive(phase2, o, SEQ[k]);
         bus_wait_us(5);
-        uint16_t in = 0;
-        if (in_mask & DATA_IN_MASK) in |= bus_data_read();
-        in |= (uint16_t)(bus_status_read() << DATA_COUNT);
+        uint16_t in = bus_inputs_read();
         drive(phase2, o, 1); /* back to rest at once */
+        bus_irq_restore(irq);
+        if (bus_faulted()) { /* the sample is meaningless: drop it and the rest of this output */
+            r->aborted = true;
+            return;
+        }
         in &= in_mask;
         if (k == 0) first = in;
         else changed |= (uint16_t)(in ^ first);
@@ -68,7 +74,6 @@ void scan_measure(scan_result_t *r) {
     bus_oe_data(true);
     for (unsigned o = DATA_COUNT; o < SCAN_OUTPUTS && !r->aborted; o++) {
         test_output(r, false, o, DATA_IN_MASK | STATUS_IN_MASK);
-        if (bus_faulted()) r->aborted = true;
     }
 
     bool ctrl_to_data = false;
@@ -91,35 +96,59 @@ void scan_measure(scan_result_t *r) {
 
 void scan_report(const scan_result_t *r) {
     unsigned links = 0, shorts = 0, stuck = 0;
+    bool is_short[SCAN_INPUTS] = {false};
+
+    /* An input with two or more links, or a link plus something unclear, has
+     * several outputs on it: a short (a contended wire settles at a steady mid
+     * level, so each output can look like a link). A status input unclear for
+     * two or more outputs is also a short. A data input unclear for several
+     * outputs with no link is just floating. */
+    if (!r->aborted) {
+        for (unsigned i = 0; i < SCAN_INPUTS; i++) {
+            unsigned nl = 0, nu = 0;
+            for (unsigned o = 0; o < SCAN_OUTPUTS; o++) {
+                if (r->link[o][i]) nl++;
+                else if (r->unclear[o][i]) nu++;
+            }
+            is_short[i] = nl >= 2 || (nl >= 1 && nu >= 1) || (i >= DATA_COUNT && nu >= 2);
+        }
+    }
 
     for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
         for (unsigned i = 0; i < SCAN_INPUTS; i++)
-            if (r->link[o][i]) {
+            if (r->link[o][i] && !is_short[i]) {
                 out_printf("%s (pin %u) -> %s (pin %u)\n", out_name(o), out_pin(o), in_name(i), in_pin(i));
                 links++;
             }
 
-    for (unsigned i = DATA_COUNT; i < SCAN_INPUTS; i++) { /* status inputs only */
-        unsigned n = 0, only = 0;
-        for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
-            if (r->unclear[o][i] && !r->link[o][i]) { n++; only = o; }
-        if (n >= 2) {
-            out_printf("possible short: ");
-            bool first = true;
-            for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
-                if (r->unclear[o][i] && !r->link[o][i]) {
-                    out_printf("%s%s", first ? "" : " / ", out_name(o));
-                    first = false;
-                }
-            out_printf(" -> %s (pin %u)\n", in_name(i), in_pin(i));
-            shorts++;
-        } else if (n == 1) {
-            out_printf("weak or intermittent: %s -> %s?\n", out_name(only), in_name(i));
-        }
+    if (r->aborted) { /* partial: only the links found so far */
+        out_printf("scan aborted (partial)\n");
+        return;
     }
 
     for (unsigned i = 0; i < SCAN_INPUTS; i++) {
-        if (!((r->sampled >> i) & 1u)) continue;
+        if (!is_short[i]) continue;
+        out_printf("possible short: ");
+        bool first = true;
+        for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
+            if (r->link[o][i] || r->unclear[o][i]) {
+                out_printf("%s%s", first ? "" : " / ", out_name(o));
+                first = false;
+            }
+        out_printf(" -> %s (pin %u)\n", in_name(i), in_pin(i));
+        shorts++;
+    }
+
+    for (unsigned i = DATA_COUNT; i < SCAN_INPUTS; i++) { /* status inputs: one unclear output */
+        if (is_short[i]) continue;
+        unsigned n = 0, only = 0;
+        for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
+            if (r->unclear[o][i] && !r->link[o][i]) { n++; only = o; }
+        if (n == 1) out_printf("weak or intermittent: %s -> %s?\n", out_name(only), in_name(i));
+    }
+
+    for (unsigned i = 0; i < SCAN_INPUTS; i++) {
+        if (!((r->sampled >> i) & 1u) || is_short[i]) continue;
         bool changed = ((r->seen0 & r->seen1) >> i) & 1u;
         bool has_link = false;
         for (unsigned o = 0; o < SCAN_OUTPUTS; o++)
@@ -133,7 +162,6 @@ void scan_report(const scan_result_t *r) {
     }
 
     if (r->phase2_skipped) out_printf("phase 2 skipped: control -> data jumpers present\n");
-    if (r->aborted) out_printf("scan aborted\n");
     out_printf("scan: %u links, %u possible shorts, %u stuck\n", links, shorts, stuck);
 }
 
@@ -142,5 +170,5 @@ const char *scan_run(void) {
     io_write(SCAN_RULES); /* longer than out_printf's 160-character buffer */
     scan_measure(&r);
     scan_report(&r);
-    return r.aborted ? "scan aborted by a fault" : NULL;
+    return r.aborted ? "fault during scan; unplug to reset" : NULL;
 }

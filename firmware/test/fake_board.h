@@ -54,4 +54,14 @@ bool fake_u23_enabled(void);
 uint64_t fake_max_contention_us(void);
 void fake_contention_reset(void);
 
+/* What a wire reads when two drivers disagree (real hardware settles at a
+ * steady mid level, so a reader sees the same value every time). */
+enum { FAKE_CONTEND_ALTERNATE, FAKE_CONTEND_LOW, FAKE_CONTEND_HIGH };
+void fake_set_contention(int mode); /* default ALTERNATE; reset by fake_reset */
+
+/* Interrupt masking: hal_irq_save/restore nest; they take no simulated time. */
+int fake_irq_depth(void);
+/* Longest time (us) outputs disagreed while the irq depth was 0. */
+uint64_t fake_max_contention_irq_on_us(void);
+
 #endif

@@ -102,6 +102,11 @@ void bus_data_write(uint8_t v) {
 
 uint8_t bus_data_read(void) { return (uint8_t)(hal_get_all() >> PIN_DATA_BASE); }
 
+uint16_t bus_inputs_read(void) {
+    uint32_t v = hal_get_all();
+    return (uint16_t)(((v >> PIN_DATA_BASE) & 0xFFu) | (((v >> PIN_STATUS_BASE) & 0x1Fu) << DATA_COUNT));
+}
+
 void bus_out_write(uint8_t data, uint8_t ctrl) {
     if (faulted) return;
     if (!data_out) {
@@ -136,3 +141,6 @@ bool bus_oe_ctrl_on(void) { return oe_ctrl; }
 bool bus_data_is_out(void) { return data_out; }
 
 void bus_wait_us(uint32_t us) { hal_delay_us(us); }
+
+uint32_t bus_irq_save(void) { return hal_irq_save(); }
+void bus_irq_restore(uint32_t state) { hal_irq_restore(state); }
