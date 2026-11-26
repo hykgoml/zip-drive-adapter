@@ -358,7 +358,7 @@ static void test_banner_resets_line_editor(void) {
     CHECK_CONTAINS(run("info"), "ok\n");
 }
 
-static const char *const CTRL_DATA_ERR = "control -> data jumpers present";
+static const char *const CTRL_DATA_ERR = "control -> data link seen: /STROBE (pin 1) -> D0 (pin 2)";
 
 static void test_dir_out_refused_with_ctrl_data_jumper(void) {
     setup();
@@ -366,13 +366,37 @@ static void test_dir_out_refused_with_ctrl_data_jumper(void) {
     fake_jumper(14, 3);
     run("oe data on");
     fake_contention_reset();
-    CHECK_CONTAINS(run("dir out"), CTRL_DATA_ERR);
+    const char *out = run("dir out");
+    CHECK_CONTAINS(out, CTRL_DATA_ERR);
+    CHECK_CONTAINS(out, "control -> data link: /AUTOFD (pin 14) -> D1 (pin 3)\n");
+    CHECK_LACKS(out, "force"); /* dir out has no force option */
     CHECK(!fake_data_driven);
     CHECK(!bus_data_is_out());
     CHECK(bus_oe_data_on() && fake_u1_enabled());
     CHECK(bus_ctrl_get() == 0x0F);
     CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
     CHECK(fake_fights == 0);
+}
+
+/* oe ctrl off -> dir out (the check can't fire: U2 is off) -> oe ctrl on must not
+ * leave a control output fighting a data output. */
+static void test_oe_ctrl_on_refused_while_data_out(void) {
+    setup();
+    fake_jumper(1, 6); /* /STROBE -> D4 */
+    run("oe ctrl off");
+    run("oe data on");
+    CHECK_CONTAINS(run("dir out"), "ok\n");
+    run("data 00");
+    fake_contention_reset();
+    CHECK_CONTAINS(run("oe ctrl on"), "error: direction is out; run 'dir in' first");
+    CHECK(!fake_u23_enabled() && !bus_oe_ctrl_on());
+    for (unsigned k = 0; k < DATA_COUNT; k++) CHECK(fake_cable_level(DATA_DB25[k]) != -2);
+    CHECK(fake_max_contention_us() <= 10 && fake_fights == 0);
+    /* after dir in it is allowed, and the check then sees the jumper at dir out */
+    CHECK_CONTAINS(run("dir in"), "ok\n");
+    CHECK_CONTAINS(run("oe ctrl on"), "ok\n");
+    CHECK_CONTAINS(run("dir out"), "control -> data link seen");
+    CHECK(!bus_data_is_out());
 }
 
 static void test_dir_out_without_jumpers_works(void) {
@@ -419,6 +443,49 @@ static void test_random_commands(void) {
         if (is_scan) {
             CHECK(!fake_u1_enabled() && fake_u23_enabled());
             CHECK(!bus_data_is_out() && bus_ctrl_get() == 0x0F);
+        }
+    }
+}
+
+/* Same idea with pass-D jumpers fitted (/STROBE->D4 ... /SELIN->D7), where
+ * oe ctrl on/off is in the mix: no data or control pin may ever be contended. */
+static void test_random_commands_with_jumpers(void) {
+    static const char *const CTRLS[] = {"strobe", "autofd", "init", "selin"};
+    for (uint32_t seed = 1; seed <= 20; seed++) {
+        uint32_t rng = seed * 7919u;
+        setup();
+        fake_jumper(1, 6);
+        fake_jumper(14, 7);
+        fake_jumper(16, 8);
+        fake_jumper(17, 9);
+        char buf[48];
+        for (int n = 0; n < 200; n++) {
+            rng = rng * 1664525u + 1013904223u;
+            unsigned pick = (rng >> 16) % 16, r2 = (rng >> 8) & 0xFF;
+            switch (pick) { /* scan is rare: it resets everything to bus_safe */
+            case 0: case 1: snprintf(buf, sizeof buf, "oe data %s", r2 & 1 ? "on" : "off"); break;
+            case 2: case 3: case 4: case 5: snprintf(buf, sizeof buf, "oe ctrl %s", r2 & 1 ? "on" : "off"); break;
+            case 6: case 7: case 8: snprintf(buf, sizeof buf, "dir %s", r2 & 1 ? "in" : "out"); break;
+            case 9: case 10: snprintf(buf, sizeof buf, "data %02x", r2); break;
+            case 11: snprintf(buf, sizeof buf, "data 00"); break;
+            case 12: case 13: snprintf(buf, sizeof buf, "ctrl %s %u", CTRLS[r2 & 3], (r2 >> 2) & 1u); break;
+            default: snprintf(buf, sizeof buf, "scan"); break;
+            }
+            /* The meter counts any two outputs at different levels, even on separate
+             * wires, and `ctrl x 0` leaves one on purpose: so it is only a bound
+             * for scan, whose samples must stay short. */
+            fake_contention_reset();
+            run(buf);
+            bool bad = fake_fights != 0 || bus_faulted() ||
+                       (!strcmp(buf, "scan") && fake_max_contention_us() > 10);
+            for (unsigned k = 0; k < DATA_COUNT; k++) bad = bad || fake_cable_level(DATA_DB25[k]) == -2;
+            for (unsigned k = 0; k < CTRL_COUNT; k++) bad = bad || fake_cable_level(CTRL_DB25[k]) == -2;
+            if (bad) {
+                fprintf(stderr, "    seed %u after command %d '%s': contended or faulted (max %llu us)\n",
+                        (unsigned)seed, n, buf, (unsigned long long)fake_max_contention_us());
+                test_failures++;
+                return;
+            }
         }
     }
 }
@@ -569,6 +636,50 @@ static void test_out_printf_truncation(void) {
     CHECK(n >= 4 && strcmp(o + n - 4, "...\n") == 0);
 }
 
+static void test_walk_force_arguments(void) {
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    CHECK_CONTAINS(run("walk 100 force"), "ok\n");
+    CHECK(fake_data_driven);
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    CHECK_CONTAINS(run("walk force 100"), "ok\n");
+    CHECK(fake_data_driven);
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    fake_io_set_idle_limit(3);
+    CHECK_CONTAINS(run("pattern force"), "ok\n");
+    CHECK(fake_data_driven);
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    const char *out = run("walk 100"); /* without force: refused */
+    CHECK_CONTAINS(out, "error: control -> data link seen: /STROBE (pin 1) -> D4 (pin 6)");
+    CHECK_CONTAINS(out, "usage: walk [ms] [force]");
+    CHECK(!fake_data_driven);
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    CHECK_CONTAINS(run("pattern"), "error: control -> data link seen");
+    CHECK(!fake_data_driven);
+}
+
+static void test_walk_pattern_force_bad_args(void) {
+    static const char *const bad[] = {"walk force force", "walk 100 force 1", "walk force x", "walk 100 200",
+                                      "walk 50 force", "pattern force force", "pattern 100", "pattern forc"};
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        setup();
+        const char *out = run(bad[i]);
+        if (!strstr(out, "error: ") || !strstr(out, "usage: ") || fake_log_len != 0) {
+            fprintf(stderr, "    '%s' was not rejected cleanly:\n%s\n", bad[i], out);
+            test_failures++;
+        }
+    }
+}
+
 static void test_walk_needs_enter(void) {
     setup();
     fake_io_push("x");
@@ -657,6 +768,10 @@ int main(void) {
     RUN(test_dir_out_without_jumpers_works);
     RUN(test_walk_pattern_without_jumpers_still_work);
     RUN(test_random_commands);
+    RUN(test_random_commands_with_jumpers);
+    RUN(test_oe_ctrl_on_refused_while_data_out);
+    RUN(test_walk_force_arguments);
+    RUN(test_walk_pattern_force_bad_args);
     RUN(test_poll_key_and_wait_enter);
     RUN(test_poll_key_esc_shares_state);
     RUN(test_control_char_ends_escape);

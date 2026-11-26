@@ -48,7 +48,7 @@ static void test_walk_one_hot(void) {
     fake_io_push("\r");
     nsnap = 0;
     fake_on_op = snap;
-    const char *err = exercise_walk(100);
+    const char *err = exercise_walk(100, false);
     fake_on_op = 0;
     CHECK(err == NULL);
     CHECK(nsnap == 12);
@@ -66,7 +66,7 @@ static void test_walk_one_hot(void) {
 static void test_walk_step_time(void) {
     setup();
     fake_io_push("\r");
-    exercise_walk(250);
+    exercise_walk(250, false);
     uint64_t t[16];
     int n = 0;
     for (int i = 0; i < fake_log_len && n < 16; i++)
@@ -78,7 +78,7 @@ static void test_walk_step_time(void) {
 static void test_walk_cancel(void) {
     setup();
     fake_io_push("x");
-    CHECK(strcmp(exercise_walk(100), "cancelled") == 0);
+    CHECK(strcmp(exercise_walk(100, false), "cancelled") == 0);
     CHECK(!fake_data_driven);
     check_safe();
 }
@@ -87,7 +87,7 @@ static void test_walk_key_stops(void) {
     setup();
     fake_io_push("\r");
     fake_io_set_idle_limit(15); /* ESC after 15 empty polls: during step 2 */
-    CHECK(exercise_walk(100) == NULL);
+    CHECK(exercise_walk(100, false) == NULL);
     CHECK_CONTAINS(fake_io_output(), "D1 = pin 3 high\n");
     CHECK_LACKS(fake_io_output(), "D2 = pin 4 high");
     CHECK_CONTAINS(fake_io_output(), "stopped\n");
@@ -98,7 +98,7 @@ static void test_pattern_frequencies(void) {
     setup();
     fake_io_push("\r");
     fake_io_set_idle_limit(3); /* stops after about 170 ms */
-    CHECK(exercise_pattern() == NULL);
+    CHECK(exercise_pattern(false) == NULL);
     uint64_t t_first = 0, t_last = 0;
     uint32_t prev = 0;
     int toggles[12] = {0};
@@ -132,7 +132,7 @@ static void test_pattern_frequencies(void) {
 static void test_pattern_cancel(void) {
     setup();
     fake_io_push("q");
-    CHECK(strcmp(exercise_pattern(), "cancelled") == 0);
+    CHECK(strcmp(exercise_pattern(false), "cancelled") == 0);
     CHECK(!fake_data_driven);
     check_safe();
 }
@@ -166,7 +166,7 @@ static void test_walk_write_led(void) {
     fake_io_push("\r");
     memset(write_seen, 0, sizeof write_seen);
     fake_on_op = snap_write;
-    exercise_walk(100);
+    exercise_walk(100, false);
     fake_on_op = 0;
     for (int k = 0; k < 12; k++) CHECK(write_seen[k]);
     check_safe();
@@ -175,7 +175,7 @@ static void test_walk_write_led(void) {
 static void test_walk_poll_spacing(void) {
     setup();
     fake_io_push("\r");
-    exercise_walk(100);
+    exercise_walk(100, false);
     int n = fake_io_poll_count();
     CHECK(n > 100);
     for (int i = 1; i < n; i++) CHECK(fake_io_poll_time(i) - fake_io_poll_time(i - 1) <= 10500);
@@ -185,7 +185,7 @@ static void test_pattern_poll_spacing_and_led(void) {
     setup();
     fake_io_push("\r");
     fake_io_set_idle_limit(20);
-    exercise_pattern();
+    exercise_pattern(false);
     int n = fake_io_poll_count();
     CHECK(n > 10);
     for (int i = 1; i < n; i++) CHECK(fake_io_poll_time(i) - fake_io_poll_time(i - 1) <= 50000);
@@ -203,7 +203,7 @@ static void test_walk_fault_stops(void) {
     setup();
     fake_io_push("\r");
     fake_on_op = fault_on_first_put;
-    CHECK(exercise_walk(100) == NULL);
+    CHECK(exercise_walk(100, false) == NULL);
     fake_on_op = 0;
     CHECK(bus_faulted());
     CHECK_LACKS(fake_io_output(), " high\n");
@@ -226,7 +226,7 @@ static void test_walk_fault_later_step(void) {
     put_count = 0;
     fault_at = 4; /* all-low, D0, D1, then D2's write faults */
     fake_on_op = fault_on_nth_put;
-    exercise_walk(100);
+    exercise_walk(100, false);
     fake_on_op = 0;
     CHECK(bus_faulted());
     CHECK_CONTAINS(fake_io_output(), "D1 = pin 3 high\n");
@@ -237,7 +237,7 @@ static void test_pattern_fault_stops(void) {
     setup();
     fake_io_push("\r");
     fake_on_op = fault_on_first_put;
-    exercise_pattern();
+    exercise_pattern(false);
     fake_on_op = 0;
     CHECK(bus_faulted());
     int puts = 0;
@@ -252,7 +252,7 @@ static void test_pattern_fault_after_put(void) {
     put_count = 0;
     fault_at = 3;
     fake_on_op = fault_on_nth_put;
-    exercise_pattern();
+    exercise_pattern(false);
     fake_on_op = 0;
     int puts = 0;
     for (int i = 0; i < fake_log_len; i++)
@@ -289,7 +289,7 @@ static void test_disconnect_while_waiting_for_enter(void) {
         hook_delays = 0;
         hook_after = 5;
         fake_on_op = disconnect_in_wait;
-        const char *err = which ? exercise_pattern() : exercise_walk(100);
+        const char *err = which ? exercise_pattern(false) : exercise_walk(100, false);
         fake_on_op = 0;
         CHECK(err != NULL && strcmp(err, "cancelled") == 0);
         CHECK(!fake_data_driven);
@@ -303,7 +303,7 @@ static void test_disconnect_mid_walk(void) {
     hook_delays = 0;
     hook_after = 30; /* about 3 steps of 100 ms */
     fake_on_op = disconnect_after_delays;
-    CHECK(exercise_walk(100) == NULL);
+    CHECK(exercise_walk(100, false) == NULL);
     fake_on_op = 0;
     CHECK(!io_connected());
     CHECK(fake_data_driven);
@@ -318,7 +318,7 @@ static void test_disconnect_mid_pattern(void) {
     hook_puts = 0;
     hook_after = 3000;
     fake_on_op = disconnect_after_puts;
-    CHECK(exercise_pattern() == NULL);
+    CHECK(exercise_pattern(false) == NULL);
     fake_on_op = 0;
     CHECK(!io_connected());
     CHECK(fake_data_driven);
@@ -332,11 +332,46 @@ static void test_walk_refused_with_ctrl_data_jumper(void) {
     fake_jumper(14, 7);
     fake_io_push("\r");
     fake_contention_reset();
-    const char *err = exercise_walk(100);
-    CHECK(err != NULL && strstr(err, "control -> data jumpers present") != NULL);
+    const char *err = exercise_walk(100, false);
+    CHECK(err != NULL && strstr(err, "control -> data link seen: /STROBE (pin 1) -> D4 (pin 6)") != NULL);
+    CHECK(strstr(err, "(+1 more") != NULL && strstr(err, "'walk force' / 'pattern force'") != NULL);
+    CHECK_CONTAINS(fake_io_output(), "control -> data link: /STROBE (pin 1) -> D4 (pin 6)\n");
+    CHECK_CONTAINS(fake_io_output(), "control -> data link: /AUTOFD (pin 14) -> D5 (pin 7)\n");
     CHECK(!fake_data_driven);
     CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
     check_safe();
+}
+
+static void test_walk_force_skips_check(void) {
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    CHECK(exercise_walk(100, true) == NULL);
+    CHECK(fake_data_driven);
+    CHECK_CONTAINS(fake_io_output(), "force: jumper check skipped\n");
+    CHECK_CONTAINS(fake_io_output(), "Remove all loopback jumpers");
+}
+
+static void test_force_still_needs_enter(void) {
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("x");
+    CHECK(strcmp(exercise_walk(100, true), "cancelled") == 0);
+    CHECK(!fake_data_driven);
+    setup();
+    fake_io_push("x");
+    CHECK(strcmp(exercise_pattern(true), "cancelled") == 0);
+    CHECK(!fake_data_driven);
+}
+
+static void test_pattern_force_skips_check(void) {
+    setup();
+    fake_jumper(1, 6);
+    fake_io_push("\r");
+    fake_io_set_idle_limit(3);
+    CHECK(exercise_pattern(true) == NULL);
+    CHECK(fake_data_driven);
+    CHECK_CONTAINS(fake_io_output(), "force: jumper check skipped\n");
 }
 
 static void test_pattern_refused_with_ctrl_data_jumper(void) {
@@ -345,8 +380,8 @@ static void test_pattern_refused_with_ctrl_data_jumper(void) {
     fake_jumper(14, 7);
     fake_io_push("\r");
     fake_contention_reset();
-    const char *err = exercise_pattern();
-    CHECK(err != NULL && strstr(err, "control -> data jumpers present") != NULL);
+    const char *err = exercise_pattern(false);
+    CHECK(err != NULL && strstr(err, "control -> data link seen: /STROBE (pin 1) -> D4 (pin 6)") != NULL);
     CHECK(!fake_data_driven);
     CHECK_LACKS(fake_io_output(), "pattern running");
     CHECK(fake_max_contention_us() <= 10 && fake_max_contention_irq_on_us() == 0);
@@ -359,6 +394,9 @@ int main(void) {
     RUN(test_disconnect_mid_pattern);
     RUN(test_walk_refused_with_ctrl_data_jumper);
     RUN(test_pattern_refused_with_ctrl_data_jumper);
+    RUN(test_walk_force_skips_check);
+    RUN(test_force_still_needs_enter);
+    RUN(test_pattern_force_skips_check);
     RUN(test_walk_one_hot);
     RUN(test_walk_step_time);
     RUN(test_walk_cancel);

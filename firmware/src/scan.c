@@ -1,5 +1,6 @@
 #include "scan.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "bus.h"
@@ -13,9 +14,7 @@
 const char SCAN_RULES[] =
     "Jumper rules: wire an output to an input only (data to status, control to status,\n"
     "control to data). Never join two control pins or two data pins.\n"
-    "At most one jumper per input pin. Remove all jumpers before walk and pattern.\n";
-
-const char SCAN_CTRL_DATA_ERROR[] = "control -> data jumpers present; remove all jumpers";
+    "At most one jumper per input pin. Remove all jumpers before walk, pattern and dir out.\n";
 
 /* Irregular, so a floating input picking up crosstalk is unlikely to match. */
 static const uint8_t SEQ[SAMPLES] = {0, 1, 1, 0, 1, 0, 0, 1};
@@ -94,21 +93,55 @@ void scan_measure(scan_result_t *r) {
     bus_safe();
 }
 
-bool scan_ctrl_to_data_present(void) {
-    if (!bus_oe_data_on() || bus_data_is_out()) return true;
-    if (!bus_oe_ctrl_on()) return false; /* controls aren't driven onto the cable */
+/* Links found, or -1 if the check can't be made. */
+static int ctrl_data_links(bool link[CTRL_COUNT][DATA_COUNT]) {
+    if (!bus_oe_data_on() || bus_data_is_out()) return -1;
+    if (!bus_oe_ctrl_on()) return 0; /* controls aren't driven onto the cable */
     uint8_t entry = bus_ctrl_get();
     scan_result_t r;
     memset(&r, 0, sizeof r);
     for (unsigned o = DATA_COUNT; o < SCAN_OUTPUTS && !r.aborted; o++) test_output(&r, false, o, DATA_IN_MASK);
     bus_ctrl_write(entry);
-    if (r.aborted) return true;
-    for (unsigned o = DATA_COUNT; o < SCAN_OUTPUTS; o++)
-        for (unsigned i = 0; i < DATA_COUNT; i++)
+    if (r.aborted) return -1;
+    int n = 0;
+    for (unsigned k = 0; k < CTRL_COUNT; k++)
+        for (unsigned i = 0; i < DATA_COUNT; i++) {
             /* Links only: unwired data lines float and wander, so "unclear" is
              * common without any jumper and would refuse a clean board. */
-            if (r.link[o][i]) return true;
-    return false;
+            link[k][i] = r.link[DATA_COUNT + k][i];
+            if (link[k][i]) n++;
+        }
+    return n;
+}
+
+bool scan_ctrl_to_data_present(void) {
+    bool link[CTRL_COUNT][DATA_COUNT];
+    return ctrl_data_links(link) != 0;
+}
+
+const char *scan_ctrl_to_data_refusal(bool force_hint) {
+    static char msg[200];
+    bool link[CTRL_COUNT][DATA_COUNT];
+    int n = ctrl_data_links(link);
+    if (n == 0) return NULL;
+    if (n < 0) return "can't check for control -> data jumpers (data buffer must be on, direction in)";
+    int first_k = -1, first_i = -1;
+    for (unsigned k = 0; k < CTRL_COUNT; k++)
+        for (unsigned i = 0; i < DATA_COUNT; i++)
+            if (link[k][i]) {
+                out_printf("control -> data link: %s (pin %u) -> %s (pin %u)\n", CTRL_NAME[k], CTRL_DB25[k],
+                           DATA_NAME[i], DATA_DB25[i]);
+                if (first_k < 0) {
+                    first_k = (int)k;
+                    first_i = (int)i;
+                }
+            }
+    char more[24] = "";
+    if (n > 1) snprintf(more, sizeof more, " (+%d more)", n - 1);
+    snprintf(msg, sizeof msg, "control -> data link seen: %s (pin %u) -> %s (pin %u)%s; remove all jumpers%s",
+             CTRL_NAME[first_k], CTRL_DB25[first_k], DATA_NAME[first_i], DATA_DB25[first_i], more,
+             force_hint ? ", or use 'walk force' / 'pattern force' if none are fitted" : "");
+    return msg;
 }
 
 void scan_report(const scan_result_t *r) {

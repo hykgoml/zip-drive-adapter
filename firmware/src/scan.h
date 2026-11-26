@@ -23,13 +23,17 @@ void scan_measure(scan_result_t *r);      /* both phases; ends in bus_safe() */
 void scan_report(const scan_result_t *r); /* prints the report */
 /* Quick check before driving the data lines. Precondition: U1 on, direction in
  * (otherwise returns true: it can't tell). Samples the 4 control lines against
- * the 8 data inputs like phase 1; true if any control -> data link
- * shows (8 of 8 samples). A merely "unclear" result is ignored: unwired data
- * lines float and wander, which would refuse a clean board. Control lines end
- * at their entry value. If the control buffer is off nothing can fight, so it
- * returns false. */
+ * the 8 data inputs like phase 1; true if any control -> data link shows (8 of 8
+ * samples). A merely "unclear" result is ignored: unwired data lines float and
+ * wander, which would refuse a clean board. Control lines end at their entry
+ * value. If the control buffer is off nothing can fight, so it returns false. */
 bool scan_ctrl_to_data_present(void);
-extern const char SCAN_CTRL_DATA_ERROR[]; /* "control -> data jumpers present; ..." */
+
+/* The same check, for a command that is about to drive data. Returns NULL if
+ * clear. Otherwise prints every link found on its own line and returns an error
+ * message naming the first one (and how many more); force_hint adds the advice
+ * to use 'walk force' / 'pattern force'. The message is in a static buffer. */
+const char *scan_ctrl_to_data_refusal(bool force_hint);
 
 const char *scan_run(void);               /* rules + measure + report (console) */
 

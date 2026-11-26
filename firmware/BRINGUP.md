@@ -28,8 +28,8 @@ picotool load -x firmware/build/zipbridge_bringup.uf2
 | 4 | `leds` | READY, then READ, then WRITE, each on alone for 0.5 s. | LED fitted backwards, or wrong resistor. |
 | 5 | `status` with nothing connected | `/ACK=1 BUSY=1 PE=1 SELECT=1 /ERROR=1` | A 0 points at that line's 10k pull-up (R9–R13) or U3. |
 | 6 | `ctrl strobe 0`, `status`, `ctrl strobe 1` | READ and WRITE flash. No change in status (nothing is wired yet). | — |
-| 7 | No jumpers. Multimeter between DB25 pin 18 (GND) and the pin named. Run `walk 3000` and press Enter. | Each named pin reads about 3.3 V while it's high, and every other output pin reads about 0 V. | A pin stuck low or high: U1/U2 solder, or its 100Ω resistor (data only). A pin that is high at the wrong step: swapped traces. |
-| 8 | No jumpers. Logic analyzer on pins 2–9, 1, 14, 16, 17 (GND on 18). Run `pattern`, press Enter, and capture 50 ms. | D0 12 kHz, D1 6, D2 4, D3 3, D4 2.4, D5 2, D6 1.71, D7 1.5, /STROBE 1.33, /AUTOFD 1.2, /INIT 1.09, /SELIN 1.0 kHz. Clean edges. | A missing line points at its buffer pin. Two lines that look the same point at a bridge between them. |
+| 7 | No jumpers. Multimeter between DB25 pin 18 (GND) and the pin named. Run `walk 3000` and press Enter. | Each named pin reads about 3.3 V while it's high, and every other output pin reads about 0 V. | A pin stuck low or high: U1/U2 solder, or its 100Ω resistor (data only). A pin that is high at the wrong step: swapped traces. Refused with no jumpers fitted: crosstalk; run `scan` (step 9) to see it, then use `walk force`. |
+| 8 | No jumpers. Logic analyzer on pins 2–9, 1, 14, 16, 17 (GND on 18). Run `pattern`, press Enter, and capture 50 ms. | D0 12 kHz, D1 6, D2 4, D3 3, D4 2.4, D5 2, D6 1.71, D7 1.5, /STROBE 1.33, /AUTOFD 1.2, /INIT 1.09, /SELIN 1.0 kHz. Clean edges. | A missing line points at its buffer pin. Two lines that look the same point at a bridge between them. Refused with no jumpers fitted: crosstalk; run `scan` (step 9) to see it, then use `pattern force`. |
 | 9 | No jumpers. `scan` | `scan: 0 links, 0 possible shorts, ...`. The 5 status pins read `stuck high`; the data lines read `floating?` or `stuck`. | Any link here means crosstalk (see below). Treat later results with care. |
 | 10 | Loopback passes A–D below, with `scan`. | The output listed for each pass. | See "Reading scan output". |
 
@@ -39,6 +39,8 @@ Notes:
 - Step 8: edges have a few µs of jitter from USB interrupts, but the average frequency is exact. D0 can very rarely miss one pulse (a stretched half-period). Neither is a wiring fault.
 - The data pins have pull-ups (RP2350 erratum E9). With `oe data off`, `data` reads `0xFF`. That is normal.
 - Step 9: an unwired data line can pick up a neighbouring control line through crosstalk and show a false link. If this scan shows any link, crosstalk is present.
+
+The terminal must raise DTR (`screen` does). Otherwise `walk` and `pattern` cancel at once and no output is shown.
 
 Console: `help scan` shows the jumper rules. Ctrl-U or Ctrl-C clears the line. Keys typed during `leds` run after it finishes.
 

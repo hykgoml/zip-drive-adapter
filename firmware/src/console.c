@@ -105,8 +105,8 @@ static const cmd_t CMDS[] = {
     {"oe", "oe <data|ctrl> <on|off>", cmd_oe, true},
     {"dir", "dir <in|out>", cmd_dir, true},
     {"data", "data [<hex>]", cmd_data, false}, /* write form checks the fault itself */
-    {"walk", "walk [ms]  (100-10000, default 1000; no jumpers)", cmd_walk, true},
-    {"pattern", "pattern  (no jumpers)", cmd_pattern, true},
+    {"walk", "walk [ms] [force]  (100-10000, default 1000; no jumpers; force skips the jumper check)", cmd_walk, true},
+    {"pattern", "pattern [force]  (no jumpers; force skips the jumper check)", cmd_pattern, true},
     {"scan", "scan  (loopback mapper; see 'help scan')", cmd_scan, true},
 };
 #define N_CMDS (sizeof CMDS / sizeof CMDS[0])
@@ -183,9 +183,16 @@ static const char *cmd_oe(int argc, char **argv) {
     if (strcmp(argv[2], "on") == 0) on = true;
     else if (strcmp(argv[2], "off") == 0) on = false;
     else return "state must be on or off";
-    if (strcmp(argv[1], "data") == 0) bus_oe_data(on);
-    else if (strcmp(argv[1], "ctrl") == 0) bus_oe_ctrl(on);
-    else return "buffer must be data or ctrl";
+    if (strcmp(argv[1], "data") == 0) {
+        bus_oe_data(on);
+    } else if (strcmp(argv[1], "ctrl") == 0) {
+        /* With data driven, the dir-out check could not see jumpers while U2 was
+         * off: turning U2 on now could start a control/data fight. */
+        if (on && bus_data_is_out()) return "direction is out; run 'dir in' first";
+        bus_oe_ctrl(on);
+    } else {
+        return "buffer must be data or ctrl";
+    }
     return NULL;
 }
 
@@ -200,7 +207,8 @@ static const char *cmd_dir(int argc, char **argv) {
     if (!bus_oe_data_on()) return "oe data is off; run 'oe data on' first";
     /* The check briefly samples the control lines (they end at their old values);
      * nothing else changes if it refuses. */
-    if (scan_ctrl_to_data_present()) return bus_faulted() ? fault_error() : SCAN_CTRL_DATA_ERROR;
+    const char *refuse = scan_ctrl_to_data_refusal(false); /* no force option here */
+    if (refuse) return bus_faulted() ? fault_error() : refuse;
     bus_data_dir_out(last_data);
     return NULL;
 }
@@ -236,15 +244,27 @@ static bool parse_uint(const char *s, uint32_t *v) {
 
 static const char *cmd_walk(int argc, char **argv) {
     uint32_t ms = 1000;
-    if (argc > 2) return "too many arguments";
-    if (argc == 2 && (!parse_uint(argv[1], &ms) || ms < 100 || ms > 10000)) return "ms must be 100-10000";
-    return exercise_walk(ms);
+    bool force = false, have_ms = false;
+    if (argc > 3) return "too many arguments";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "force") == 0) {
+            if (force) return "force given twice";
+            force = true;
+        } else if (have_ms) {
+            return "too many arguments";
+        } else if (!parse_uint(argv[i], &ms) || ms < 100 || ms > 10000) {
+            return "ms must be 100-10000 (or 'force')";
+        } else {
+            have_ms = true;
+        }
+    }
+    return exercise_walk(ms, force);
 }
 
 static const char *cmd_pattern(int argc, char **argv) {
-    (void)argv;
-    if (argc != 1) return "too many arguments";
-    return exercise_pattern();
+    if (argc > 2) return "too many arguments";
+    if (argc == 2 && strcmp(argv[1], "force") != 0) return "the only argument is 'force'";
+    return exercise_pattern(argc == 2);
 }
 
 static const char *cmd_scan(int argc, char **argv) {
@@ -300,7 +320,10 @@ void console_exec(char *s) {
     const char *err = (c->changes_pins && was_faulted) ? fault_error() : c->fn(argc, argv);
     if (!err && !was_faulted && bus_faulted()) err = fault_error(); /* faulted mid-command */
     console_service(); /* the FAULT report comes before the error line */
-    if (err) out_printf("error: %s\nusage: %s\n", err, c->usage);
+    if (err) { /* two calls: a long message plus the usage must not be cut off */
+        out_printf("error: %s\n", err);
+        out_printf("usage: %s\n", c->usage);
+    }
     else out_printf("ok\n");
 }
 
