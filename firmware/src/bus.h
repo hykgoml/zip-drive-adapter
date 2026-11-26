@@ -22,6 +22,7 @@ uint8_t bus_status_read(void);
 void bus_ctrl_write(uint8_t levels);
 uint8_t bus_ctrl_get(void);
 
+/* Direction changes. If U1 is on, it is turned off first and back on last. */
 void bus_data_dir_out(uint8_t preload); /* preload, DIR high, then Pico outputs */
 void bus_data_dir_in(void);             /* Pico inputs, then DIR low */
 void bus_data_write(uint8_t v);         /* faults if direction is in */
