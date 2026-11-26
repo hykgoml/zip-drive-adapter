@@ -20,6 +20,7 @@ static char line[CONSOLE_LINE_MAX + 1];
 static size_t len;
 static bool overflow;
 static int prev_char;
+static int esc_state; /* 0 none, 1 after ESC, 2 inside [ or O sequence */
 static uint8_t last_data; /* last `data <hex>` value, preloaded by `dir out` */
 static char errbuf[96];
 
@@ -28,8 +29,9 @@ void out_printf(const char *fmt, ...) {
     char buf[160];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
+    int n = vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    if (n >= (int)sizeof buf) strcpy(buf + sizeof buf - 5, "...\n");
     io_write(buf);
 }
 
@@ -166,10 +168,11 @@ static const char *cmd_oe(int argc, char **argv) {
 static const char *cmd_dir(int argc, char **argv) {
     if (argc != 2) return argc < 2 ? "missing argument" : "too many arguments";
     if (strcmp(argv[1], "in") == 0) {
-        bus_data_dir_in();
+        if (bus_data_is_out()) bus_data_dir_in();
         return NULL;
     }
     if (strcmp(argv[1], "out") != 0) return "direction must be in or out";
+    if (bus_data_is_out()) return NULL; /* already out */
     if (!bus_oe_data_on()) return "oe data is off; run 'oe data on' first";
     bus_data_dir_out(last_data);
     return NULL;
@@ -199,6 +202,7 @@ void console_init(void) {
     len = 0;
     overflow = false;
     prev_char = 0;
+    esc_state = 0;
     last_data = 0;
     bus_set_fault_handler(on_fault);
 }
@@ -210,13 +214,11 @@ void console_banner(void) {
 void console_exec(char *s) {
     for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p);
     char *argv[MAX_ARGS];
-    int argc = 0;
-    for (char *t = strtok(s, " \t"); t; t = strtok(NULL, " \t")) {
-        if (argc == MAX_ARGS) {
-            out_printf("error: too many arguments\nusage: help\n");
-            return;
-        }
-        argv[argc++] = t;
+    int argc = 0; /* counts every token; only the first MAX_ARGS are stored */
+    char *save;
+    for (char *t = strtok_r(s, " \t", &save); t; t = strtok_r(NULL, " \t", &save)) {
+        if (argc < MAX_ARGS) argv[argc] = t;
+        argc++;
     }
     if (argc == 0) return;
     const cmd_t *c = NULL;
@@ -226,7 +228,9 @@ void console_exec(char *s) {
         out_printf("error: unknown command '%s'\nusage: help\n", argv[0]);
         return;
     }
-    const char *err = (c->changes_pins && bus_faulted()) ? fault_error() : c->fn(argc, argv);
+    bool was_faulted = bus_faulted();
+    const char *err = (c->changes_pins && was_faulted) ? fault_error() : c->fn(argc, argv);
+    if (!err && !was_faulted && bus_faulted()) err = fault_error(); /* faulted mid-command */
     if (err) out_printf("error: %s\nusage: %s\n", err, c->usage);
     else out_printf("ok\n");
 }
@@ -235,6 +239,28 @@ void console_feed(int c) {
     bool lf_after_cr = (c == '\n' && prev_char == '\r');
     prev_char = c;
     if (lf_after_cr) return;
+    if (esc_state == 2) {
+        if (c >= 0x40 && c <= 0x7E) esc_state = 0;
+        return;
+    }
+    if (esc_state == 1) {
+        esc_state = 0;
+        if (c == '[' || c == 'O') {
+            esc_state = 2;
+            return;
+        }
+    }
+    if (c == 0x1B) {
+        esc_state = 1;
+        return;
+    }
+    if (c == 0x15 || c == 0x03) {
+        len = 0;
+        overflow = false;
+        io_write(c == 0x03 ? "^C\r\n" : "\r\n");
+        io_write(PROMPT);
+        return;
+    }
     if (c == '\r' || c == '\n') {
         io_write("\n");
         if (overflow) {
@@ -262,6 +288,7 @@ void console_feed(int c) {
         io_write(echo);
     } else {
         overflow = true;
+        io_write("\a");
     }
 }
 

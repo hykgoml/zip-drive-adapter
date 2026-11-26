@@ -72,22 +72,78 @@ static void test_unknown_command(void) {
     CHECK(fake_log_len == 0);
 }
 
-static void test_bad_arguments_change_nothing(void) {
-    static const char *const bad[] = {
-        "ctrl", "ctrl strobe", "ctrl strobe 2", "ctrl foo 1", "ctrl strobe 1 1",
-        "oe", "oe data", "oe data maybe", "oe disk on",
-        "dir", "dir sideways", "dir in out",
-        "data 1ff", "data zz", "data 0x", "data 12 34",
-        "status x", "info x", "leds x", "help x y",
-    };
-    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+static const char *const BAD[] = {
+    "ctrl", "ctrl strobe", "ctrl strobe 2", "ctrl foo 1", "ctrl strobe 1 1", "ctrl strobe 1 1 1",
+    "oe", "oe data", "oe data maybe", "oe disk on",
+    "dir", "dir sideways", "dir in out",
+    "data 1ff", "data zz", "data 0x", "data 12 34",
+    "status x", "info x", "leds x", "help x y",
+};
+
+static void check_bad_list(bool risky) {
+    for (size_t i = 0; i < sizeof BAD / sizeof BAD[0]; i++) {
         setup();
-        const char *out = run(bad[i]);
+        if (risky) {
+            run("oe data on");
+            run("dir out");
+            fake_log_clear();
+        }
+        const char *out = run(BAD[i]);
         if (!strstr(out, "error: ") || !strstr(out, "usage: ") || fake_log_len != 0) {
-            fprintf(stderr, "    '%s' was not rejected cleanly:\n%s\n", bad[i], out);
+            fprintf(stderr, "    '%s' was not rejected cleanly:\n%s\n", BAD[i], out);
             test_failures++;
         }
     }
+}
+
+static void test_bad_arguments_change_nothing(void) { check_bad_list(false); }
+static void test_bad_arguments_from_risky_state(void) { check_bad_list(true); }
+
+static void test_too_many_tokens_usage(void) {
+    setup();
+    const char *out = run("ctrl strobe 1 1 1");
+    CHECK_CONTAINS(out, "error: too many arguments");
+    CHECK_CONTAINS(out, "usage: ctrl <strobe");
+    out = run("frob a b c d e");
+    CHECK_CONTAINS(out, "unknown command 'frob'");
+    CHECK_CONTAINS(out, "usage: help");
+}
+
+static void test_blank_lines(void) {
+    setup();
+    const char *out = run("");
+    CHECK_LACKS(out, "ok");
+    CHECK_LACKS(out, "error");
+    CHECK_CONTAINS(out, "> ");
+    out = run("   \t ");
+    CHECK_LACKS(out, "ok");
+    CHECK_LACKS(out, "error");
+    CHECK(fake_log_len == 0);
+}
+
+static void test_surrounding_spaces(void) {
+    setup();
+    CHECK_CONTAINS(run("  status   "), "/ACK=1");
+}
+
+static void test_hex_prefix_uppercase(void) {
+    setup();
+    run("oe data on");
+    run("dir out");
+    CHECK_CONTAINS(run("data 0X5A"), "ok\n");
+    CHECK(data_cable() == 0x5A);
+}
+
+static void test_dir_same_direction_is_noop(void) {
+    setup();
+    run("oe data on");
+    fake_log_clear();
+    CHECK_CONTAINS(run("dir in"), "ok\n");
+    CHECK(fake_log_len == 0);
+    run("dir out");
+    fake_log_clear();
+    CHECK_CONTAINS(run("dir out"), "ok\n");
+    CHECK(fake_log_len == 0);
 }
 
 static void test_ctrl_sets_pin(void) {
@@ -213,9 +269,121 @@ static void test_fault_reported_and_sticky(void) {
     fake_log_clear();
     CHECK_CONTAINS(run("oe data on"), "error: fault");
     CHECK_CONTAINS(run("ctrl strobe 0"), "error: fault");
-    CHECK(fake_log_len == 0);
+    CHECK_CONTAINS(run("dir out"), "error: fault");
+    CHECK_CONTAINS(run("dir in"), "error: fault");
+    CHECK_CONTAINS(run("data 5a"), "error: fault");
+    CHECK(fake_log_len == 0); /* before any read: reads flash LEDs */
     CHECK_CONTAINS(run("status"), "ok\n"); /* reads still work */
     CHECK_CONTAINS(run("info"), "FAULT:");
+    CHECK_CONTAINS(run("data"), "data: 0x");
+    CHECK_CONTAINS(run("data"), "ok\n");
+}
+
+/* The hook fires after the first PUT of the command and faults the bus by
+ * writing data while the direction is in. It clears itself first, so the
+ * fault path's own hal calls do not re-enter it. */
+static void fault_hook(const fake_call_t *call) {
+    if (call->op != FAKE_PUT) return;
+    fake_on_op = 0;
+    bus_data_write(1);
+}
+
+static void test_fault_during_command_is_not_ok(void) {
+    setup();
+    fake_io_clear_output();
+    fake_on_op = fault_hook;
+    const char *out = run("ctrl strobe 0");
+    fake_on_op = 0;
+    CHECK_CONTAINS(out, "FAULT:");
+    CHECK_CONTAINS(out, "error: fault");
+    CHECK_LACKS(strstr(out, "error: fault") ? strstr(out, "error: fault") : "", "ok\n");
+    CHECK(bus_faulted());
+}
+
+static void test_poll_key_and_wait_enter(void) {
+    setup();
+    fake_io_set_idle_limit(1000000);
+    feed("x\r");
+    fake_io_push("\n\r");
+    CHECK(console_wait_enter()); /* LF skipped, CR is Enter */
+    setup();
+    fake_io_set_idle_limit(1000000);
+    fake_io_push("\n");
+    CHECK(console_wait_enter()); /* lone LF is Enter */
+    setup();
+    fake_io_set_idle_limit(1000000);
+    feed("\r");
+    fake_io_push("x");
+    CHECK(console_poll_key() == 'x');
+    setup();
+    fake_io_set_idle_limit(1000000);
+    fake_io_push("q");
+    CHECK(!console_wait_enter());
+    setup();
+    fake_io_set_idle_limit(1000000);
+    CHECK(console_poll_key() == -1);
+}
+
+static void test_line_boundary(void) {
+    setup();
+    char line[128];
+    memset(line, ' ', 80);
+    memcpy(line, "status", 6);
+    line[80] = 0;
+    const char *out = run(line);
+    CHECK_CONTAINS(out, "/ACK=1");
+    CHECK_LACKS(out, "too long");
+    line[80] = ' ';
+    line[81] = 0;
+    out = run(line);
+    CHECK_CONTAINS(out, "error: line too long");
+    CHECK_CONTAINS(out, "\a");
+}
+
+static void test_ctrl_u_and_ctrl_c(void) {
+    setup();
+    char line[101];
+    memset(line, 'a', 100);
+    line[100] = 0;
+    fake_io_clear_output();
+    feed(line);
+    feed("\x15");
+    CHECK_CONTAINS(fake_io_output(), "\r\n> ");
+    fake_io_clear_output();
+    feed("status\r");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=1");
+    CHECK_LACKS(fake_io_output(), "too long");
+    fake_io_clear_output();
+    feed("junk\x03");
+    CHECK_CONTAINS(fake_io_output(), "^C\r\n> ");
+    fake_io_clear_output();
+    feed("status\r");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=1");
+    CHECK_LACKS(fake_io_output(), "unknown");
+}
+
+static void test_escape_sequences_swallowed(void) {
+    setup();
+    fake_io_clear_output();
+    feed("\x1b[A\x1b[D\x1bOBstatus\r");
+    CHECK_CONTAINS(fake_io_output(), "/ACK=1");
+    CHECK_LACKS(fake_io_output(), "unknown");
+    fake_io_clear_output();
+    feed("\x1bstatus\r"); /* lone ESC dropped, rest handled */
+    CHECK_CONTAINS(fake_io_output(), "/ACK=1");
+}
+
+static void test_out_printf_truncation(void) {
+    setup();
+    char big[300];
+    memset(big, 'z', sizeof big - 1);
+    big[sizeof big - 1] = 0;
+    fake_io_clear_output();
+    out_printf("%s", big);
+    const char *o = fake_io_output();
+    size_t n = strlen(o);
+    CHECK(n < 160);
+    CHECK(n >= 4 && strcmp(o + n - 4, "...\n") == 0);
 }
 
 int main(void) {
@@ -237,5 +405,17 @@ int main(void) {
     RUN(test_lf_alone_works);
     RUN(test_line_too_long);
     RUN(test_fault_reported_and_sticky);
+    RUN(test_bad_arguments_from_risky_state);
+    RUN(test_too_many_tokens_usage);
+    RUN(test_blank_lines);
+    RUN(test_surrounding_spaces);
+    RUN(test_hex_prefix_uppercase);
+    RUN(test_dir_same_direction_is_noop);
+    RUN(test_fault_during_command_is_not_ok);
+    RUN(test_poll_key_and_wait_enter);
+    RUN(test_line_boundary);
+    RUN(test_ctrl_u_and_ctrl_c);
+    RUN(test_escape_sequences_swallowed);
+    RUN(test_out_printf_truncation);
     return test_report();
 }
