@@ -1,0 +1,40 @@
+#ifndef SCAN_H
+#define SCAN_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "board.h"
+
+#define SCAN_OUTPUTS (DATA_COUNT + CTRL_COUNT)  /* 0..7 = D0..D7, 8..11 = /STROBE../SELIN */
+#define SCAN_INPUTS  (DATA_COUNT + STATUS_COUNT) /* 0..7 = D0..D7, 8..12 = /ACK../ERROR */
+
+typedef struct {
+    bool link[SCAN_OUTPUTS][SCAN_INPUTS];    /* matched on all 8 samples (any phase) */
+    bool unclear[SCAN_OUTPUTS][SCAN_INPUTS]; /* changed but didn't match */
+    uint16_t sampled, seen0, seen1;          /* bit per input */
+    bool phase2_skipped;
+    bool aborted;
+} scan_result_t;
+
+extern const char SCAN_RULES[];
+
+void scan_measure(scan_result_t *r);      /* both phases; ends in bus_safe() */
+void scan_report(const scan_result_t *r); /* prints the report */
+/* Quick check before driving the data lines. Precondition: U1 on, direction in
+ * (otherwise returns true: it can't tell). Samples the 4 control lines against
+ * the 8 data inputs like phase 1; true if any control -> data link shows (8 of 8
+ * samples). A merely "unclear" result is ignored: unwired data lines float and
+ * wander, which would refuse a clean board. Control lines end at their entry
+ * value. If the control buffer is off nothing can fight, so it returns false. */
+bool scan_ctrl_to_data_present(void);
+
+/* The same check, for a command that is about to drive data. Returns NULL if
+ * clear. Otherwise prints every link found on its own line and returns an error
+ * message naming the first one (and how many more); force_hint adds the advice
+ * to use 'walk force' / 'pattern force'. The message is in a static buffer. */
+const char *scan_ctrl_to_data_refusal(bool force_hint);
+
+const char *scan_run(void);               /* rules + measure + report (console) */
+
+#endif
